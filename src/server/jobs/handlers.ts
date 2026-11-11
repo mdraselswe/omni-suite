@@ -2,6 +2,7 @@ import "server-only";
 import { and, eq, lte } from "drizzle-orm";
 import { connectedTenants, fullSync, snapshot, syncChanges } from "@/features/backup";
 import { runRecurring } from "@/features/invoices";
+import { syncXero, xeroDueForSync } from "@/features/xero";
 import { today } from "@/lib/dates";
 import { parseTenantSettings } from "@/lib/tenant-settings";
 import type { Database } from "@/server/db";
@@ -33,6 +34,12 @@ export function createHandlers(database: () => Database): Map<string, JobHandler
     ["backup.full", (job) => fullSync(database(), tenantOf(job))],
     ["backup.snapshot", (job) => snapshot(database(), tenantOf(job))],
     [
+      "xero.sync",
+      async (job) => {
+        await syncXero(database(), tenantOf(job));
+      },
+    ],
+    [
       "invoices.recurring",
       async (job) => {
         const tenant = await loadTenant(database(), tenantOf(job));
@@ -53,6 +60,10 @@ export async function scheduleRecurring(database: Database, now: Date): Promise<
         dedupeKey: `backup.snapshot:${c.tenantId}`,
       });
     }
+  }
+  // Xero: push changes at most hourly per business.
+  for (const tenantId of await xeroDueForSync(database, now)) {
+    await enqueue(database, { type: "xero.sync", tenantId, dedupeKey: `xero.sync:${tenantId}` });
   }
   // Recurring invoices: any tenant with a schedule due by the latest "today" anywhere.
   const latestDay = today("Pacific/Kiritimati", now);
