@@ -1,6 +1,7 @@
 import { ActionForm, SubmitButton } from "@/components/form/action-form";
 import { PageHeader } from "@/components/layout/page";
 import { param } from "@/components/data/filter-bar";
+import { canUseAi } from "@/features/ai";
 import { createProposalAction, ProposalFields } from "@/features/proposals";
 import { t } from "@/i18n";
 import { requireTenantPermission } from "@/server/auth/session";
@@ -25,6 +26,7 @@ export default async function NewProposalPage({
           clients={clients}
           settings={ctx.tenant.settings}
           defaultClientId={clients.some((c) => c.value === client) ? client : undefined}
+          aiTenant={canUseAi(ctx) ? tenant : undefined}
         />
         <SubmitButton pendingLabel={t("form.saving")} className="justify-self-start">
           {t("form.create")}

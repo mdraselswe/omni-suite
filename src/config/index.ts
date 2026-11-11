@@ -35,3 +35,4 @@ export type {
 } from "./schema.ts";
 export { PLAN_KEYS, SIDEBAR_STYLES, SURFACE_STYLES, THEME_MODES, THEME_PRESETS } from "./schema.ts";
 export { themePresets, type Gradient, type ThemePreset } from "./themes.ts";
+export { aiConfig } from "./ai.ts";

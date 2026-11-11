@@ -3,6 +3,7 @@ import {
   FolderKanban,
   Hourglass,
   ListTodo,
+  Sparkles,
   PiggyBank,
   Receipt,
   Repeat,
@@ -19,6 +20,7 @@ import { StatusBadge } from "@/components/data/status-badge";
 import { EmptyState, PageHeader, Panel, StatCard } from "@/components/layout/page";
 import { ButtonLink } from "@/components/ui/button-link";
 import { Progress } from "@/components/ui/progress";
+import { BusinessInsights, canUseAi } from "@/features/ai";
 import { pipelineSummary } from "@/features/crm";
 import { listAccounts, monthlyTotals, profitAndLoss } from "@/features/finance";
 import { listInvoices, monthlyRecurring, receivables } from "@/features/invoices";
@@ -329,6 +331,16 @@ export default async function DashboardPage({ params, searchParams }: PageProps<
           />
         ) : null}
       </div>
+
+      {canUseAi(ctx) ? (
+        <Panel
+          title={t("ai.insights.title")}
+          description={t("ai.insights.sub")}
+          actions={<Sparkles aria-hidden="true" className="size-5 text-primary" />}
+        >
+          <BusinessInsights tenant={tenant} />
+        </Panel>
+      ) : null}
 
       <div className="grid gap-6 lg:grid-cols-3">
         {projects ? (
