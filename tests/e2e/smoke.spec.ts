@@ -67,6 +67,7 @@ test.describe("owner", () => {
     "/demo/settings/payments/",
     "/demo/settings/xero/",
     "/demo/settings/billing/",
+    "/account/",
   ];
 
   for (const path of PAGES) {
