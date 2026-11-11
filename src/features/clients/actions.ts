@@ -7,8 +7,10 @@ import { actionContext } from "@/server/auth/session";
 import { db } from "@/server/db";
 import { parseCsv } from "@/server/export";
 import { customFieldsFor } from "@/server/shared";
+import { clientSchema, parseClientImport } from "./import";
 import {
   createClient,
+  deleteTemplate,
   saveTemplate,
   sendOnboarding,
   submitOnboarding,
@@ -16,16 +18,6 @@ import {
   updateOnboardingChecklist,
   type OnboardingField,
 } from "./service";
-
-const clientSchema = z.object({
-  name: fields.required(200),
-  email: fields.email(),
-  phone: fields.text(50),
-  website: fields.text(300),
-  address: fields.text(500),
-  notes: fields.text(5000),
-  status: z.enum(["active", "inactive"]).default("active"),
-});
 
 export async function createClientAction(
   slug: string,
@@ -55,7 +47,7 @@ export async function updateClientAction(
   });
 }
 
-/** CSV import: columns name, email, phone, website, address, notes. */
+/** CSV import: columns name, email, phone, website, address, notes and cf_<key> custom fields. */
 export async function importClientsAction(
   slug: string,
   _p: ActionState,
@@ -66,14 +58,25 @@ export async function importClientsAction(
     const file = formData.get("file");
     if (!(file instanceof File) || file.size === 0) throw new UserError(t("files.empty"));
     const rows = parseCsv(await file.text()).slice(0, 2000);
-    let count = 0;
-    for (const row of rows) {
-      const parsed = clientSchema.safeParse({ ...row, status: "active" });
-      if (!parsed.success) continue;
-      await createClient(db(), ctx, { ...parsed.data, custom: {} });
-      count++;
-    }
-    return t("clients.imported", { count });
+    const defs = await customFieldsFor(db(), ctx.tenant.id, "client");
+    const { clients, skippedRows } = parseClientImport(rows, defs);
+    for (const client of clients) await createClient(db(), ctx, client);
+    const summary = t("clients.importSummary", { imported: clients.length, skipped: skippedRows.length });
+    if (skippedRows.length === 0) return summary;
+    const shown = skippedRows.slice(0, 10).join(", ");
+    return `${summary} ${t("clients.importSkippedRows", { rows: skippedRows.length > 10 ? `${shown}…` : shown })}`;
+  });
+}
+
+export async function deleteTemplateAction(
+  slug: string,
+  _p: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  return runAction(async () => {
+    const { ctx } = await actionContext(slug, "onboarding.manage");
+    await deleteTemplate(db(), ctx, fields.id().parse(formObject(formData).id));
+    return t("onboarding.templateDeleted");
   });
 }
 

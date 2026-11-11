@@ -32,8 +32,9 @@ export async function listClients(
   database: DbOrTx,
   ctx: TenantContext,
   scope: Scope,
-  filter: { q?: string; status?: "active" | "inactive" } = {},
+  filter: { q?: string; status?: "active" | "inactive"; limit?: number } = {},
 ) {
+  const q = filter.q?.replace(/[%_\\]/g, "").trim();
   const balance = sql<string>`coalesce((select sum(${invoices.totalMinor} - ${invoices.paidMinor}) from ${invoices}
     where ${invoices.clientId} = ${clients.id} and ${invoices.status} in ('sent','partially_paid')), 0)`;
   const rows = await database
@@ -44,16 +45,11 @@ export async function listClients(
         eq(clients.tenantId, ctx.tenant.id),
         clientScopeFilter(ctx, scope),
         filter.status ? eq(clients.status, filter.status) : undefined,
-        filter.q
-          ? or(
-              ilike(clients.name, `%${filter.q.replace(/[%_]/g, "")}%`),
-              ilike(clients.email, `%${filter.q.replace(/[%_]/g, "")}%`),
-            )
-          : undefined,
+        q ? or(ilike(clients.name, `%${q}%`), ilike(clients.email, `%${q}%`)) : undefined,
       ),
     )
     .orderBy(asc(clients.name))
-    .limit(500);
+    .limit(filter.limit ?? 500);
   return rows.map((r) => ({ ...r.client, balanceMinor: BigInt(r.balance) }));
 }
 
@@ -186,6 +182,32 @@ export async function saveTemplate(
       entityId: input.id,
       data: { name: input.name },
     });
+  });
+}
+
+/** Deletes an onboarding form that was never sent (sent forms keep the client's answers readable). */
+export async function deleteTemplate(database: Database, ctx: TenantContext, id: string): Promise<void> {
+  await database.transaction(async (tx) => {
+    const [used] = await tx
+      .select({ id: onboardingRequests.id })
+      .from(onboardingRequests)
+      .where(and(eq(onboardingRequests.tenantId, ctx.tenant.id), eq(onboardingRequests.templateId, id)))
+      .limit(1);
+    if (used) throw new UserError(t("onboarding.templateInUse"));
+    const [row] = await tx
+      .delete(onboardingTemplates)
+      .where(and(eq(onboardingTemplates.id, id), eq(onboardingTemplates.tenantId, ctx.tenant.id)))
+      .returning({ name: onboardingTemplates.name });
+    if (!row) throw new UserError(t("form.invalid"));
+    await audit(tx, {
+      tenantId: ctx.tenant.id,
+      actorUserId: ctx.user.id,
+      action: "onboardingTemplate.delete",
+      entityType: "onboardingTemplate",
+      entityId: id,
+      data: { name: row.name },
+    });
+    await markChanged(tx, ctx.tenant.id, "onboardingTemplate", id, "delete");
   });
 }
 

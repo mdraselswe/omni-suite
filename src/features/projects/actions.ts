@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { t } from "@/i18n";
-import { parseDuration } from "@/lib/dates";
+import { parseDuration, today } from "@/lib/dates";
 import { customValues, fields, formObject, runAction, UserError, type ActionState } from "@/server/action";
 import { actionContext } from "@/server/auth/session";
 import { db } from "@/server/db";
@@ -13,9 +13,12 @@ import {
   approveTask,
   createProject,
   createTask,
+  deleteProjectTemplate,
   deleteTask,
   deleteTime,
+  invoiceUnbilledTime,
   logTime,
+  requestTaskChanges,
   saveProjectTemplate,
   setProjectMember,
   setRate,
@@ -106,6 +109,35 @@ export async function saveProjectTemplateAction(
   });
 }
 
+export async function deleteProjectTemplateAction(
+  slug: string,
+  _p: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  return runAction(async () => {
+    const { ctx } = await actionContext(slug, "projects.write", "all");
+    await deleteProjectTemplate(db(), ctx, fields.id().parse(formObject(formData).id));
+    return t("projects.templateDeleted");
+  });
+}
+
+/** Draft invoice from the project's unbilled time, then opens it. */
+export async function invoiceUnbilledTimeAction(
+  slug: string,
+  _p: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  let invoiceId = "";
+  const state = await runAction(async () => {
+    await actionContext(slug, "invoices.write");
+    const { ctx, scope } = await actionContext(slug, "projects.read");
+    const { projectId } = z.object({ projectId: fields.id() }).parse(formObject(formData));
+    invoiceId = await invoiceUnbilledTime(db(), ctx, scope, projectId, today(ctx.tenant.settings.timezone));
+  });
+  if (state?.ok && invoiceId) redirect(`/${slug}/invoices/${invoiceId}` as "/");
+  return state;
+}
+
 const taskSchema = z.object({
   title: fields.required(300),
   description: fields.text(10000),
@@ -174,6 +206,21 @@ export async function approveTaskAction(
   return runAction(async () => {
     const { ctx } = await actionContext(slug, "portal.approve");
     await approveTask(db(), ctx, fields.id().parse(formObject(formData).id));
+  });
+}
+
+export async function requestTaskChangesAction(
+  slug: string,
+  _p: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  return runAction(async () => {
+    const { ctx } = await actionContext(slug, "portal.approve");
+    const { id, comment } = z
+      .object({ id: fields.id(), comment: fields.required(2000) })
+      .parse(formObject(formData));
+    await requestTaskChanges(db(), ctx, id, comment);
+    return t("tasks.changesSent");
   });
 }
 

@@ -2,26 +2,33 @@ import { formatters } from "@/components/data/format";
 import { ActionForm, SubmitButton } from "@/components/form/action-form";
 import { Field } from "@/components/form/field";
 import { EmptyState, PageHeader, Section } from "@/components/layout/page";
-import { ButtonAnchor } from "@/components/ui/button-link";
+import { ButtonAnchor, ButtonLink } from "@/components/ui/button-link";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatBytes, listFiles, uploadFileAction } from "@/features/files";
 import { listProjects } from "@/features/projects";
+import { param } from "@/components/data/filter-bar";
 import { t } from "@/i18n";
+import { tenantHref } from "@/lib/href";
 import { db } from "@/server/db";
 import { hasPermission } from "@/server/tenancy/context";
 import { portalPage } from "../_components/portal";
 import { UploadTarget } from "../_components/upload-target";
 
-export default async function PortalFiles({ params }: PageProps<"/[tenant]/portal/files">) {
+const PAGE = 50;
+
+export default async function PortalFiles({ params, searchParams }: PageProps<"/[tenant]/portal/files">) {
   const { tenant } = await params;
+  const limit = Math.min(Number(param(await searchParams, "limit")) || PAGE, 1000);
   const { ctx, clientId } = await portalPage(tenant, "portal.files");
   const f = formatters(ctx);
   const database = db();
-  const [files, projects] = await Promise.all([
-    listFiles(database, ctx, "all"),
+  const [rows, projects] = await Promise.all([
+    listFiles(database, ctx, "all", { limit: limit + 1 }),
     hasPermission(ctx, "portal.projects") ? listProjects(database, ctx, "all") : Promise.resolve([]),
   ]);
+  const hasMore = rows.length > limit;
+  const files = rows.slice(0, limit);
   const projectName = new Map(projects.map((p) => [p.id, p.name]));
 
   return (
@@ -78,6 +85,15 @@ export default async function PortalFiles({ params }: PageProps<"/[tenant]/porta
             </TableBody>
           </Table>
         )}
+        {hasMore ? (
+          <ButtonLink
+            href={tenantHref(tenant, `portal/files?limit=${limit + PAGE}`)}
+            variant="outline"
+            className="justify-self-center"
+          >
+            {t("list.loadMore")}
+          </ButtonLink>
+        ) : null}
       </Section>
     </div>
   );

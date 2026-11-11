@@ -1,8 +1,13 @@
+import { ActionButton } from "@/components/form/action-button";
 import { TextAreaField, TextField } from "@/components/form/field";
 import { FormDialog } from "@/components/form/form-dialog";
 import { EmptyState, Section } from "@/components/layout/page";
 import { Badge } from "@/components/ui/badge";
-import { listProjectTemplates, saveProjectTemplateAction } from "@/features/projects";
+import {
+  deleteProjectTemplateAction,
+  listProjectTemplates,
+  saveProjectTemplateAction,
+} from "@/features/projects";
 import { t } from "@/i18n";
 import { requireTenantPermission } from "@/server/auth/session";
 import { db } from "@/server/db";
@@ -37,26 +42,36 @@ export default async function ProjectTemplatesPage({ params }: PageProps<"/[tena
             <div key={tpl.id} className="grid content-start gap-3 surface p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="font-medium">{tpl.name}</h3>
-                <FormDialog
-                  trigger={t("form.edit")}
-                  title={t("projects.editTemplate")}
-                  action={action}
-                  variant="ghost"
-                  size="sm"
-                  icon={false}
-                >
-                  <input type="hidden" name="id" value={tpl.id} />
-                  <TextField name="name" label={t("form.name")} defaultValue={tpl.name} required />
-                  <TextAreaField
-                    name="tasks"
-                    label={t("projects.templateTasks")}
-                    hint={t("projects.templateTasksHint")}
-                    rows={8}
-                    defaultValue={tpl.tasks
-                      .map((task) => (task.clientVisible ? `${task.title} | client` : task.title))
-                      .join("\n")}
-                  />
-                </FormDialog>
+                <div className="flex flex-wrap gap-1">
+                  <FormDialog
+                    trigger={t("form.edit")}
+                    title={t("projects.editTemplate")}
+                    action={action}
+                    variant="ghost"
+                    size="sm"
+                    icon={false}
+                  >
+                    <input type="hidden" name="id" value={tpl.id} />
+                    <TextField name="name" label={t("form.name")} defaultValue={tpl.name} required />
+                    <TextAreaField
+                      name="tasks"
+                      label={t("projects.templateTasks")}
+                      hint={t("projects.templateTasksHint")}
+                      rows={8}
+                      defaultValue={tpl.tasks
+                        .map((task) => (task.clientVisible ? `${task.title} | client` : task.title))
+                        .join("\n")}
+                    />
+                  </FormDialog>
+                  <ActionButton
+                    action={deleteProjectTemplateAction.bind(null, tenant)}
+                    values={{ id: tpl.id }}
+                    variant="ghost"
+                    confirm={t("projects.deleteTemplateConfirm")}
+                  >
+                    {t("form.delete")}
+                  </ActionButton>
+                </div>
               </div>
               <p className="text-xs text-muted-foreground">
                 {t("projects.taskCount", { count: tpl.tasks.length })}

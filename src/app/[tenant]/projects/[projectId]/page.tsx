@@ -14,6 +14,7 @@ import {
   createTaskAction,
   deleteTaskAction,
   getProject,
+  invoiceUnbilledTimeAction,
   listComments,
   listTasks,
   logTimeAction,
@@ -23,6 +24,7 @@ import {
   setProjectMemberAction,
   setTaskStatusAction,
   TaskStatusSelect,
+  unbilledTime,
   updateProjectAction,
   updateTaskAction,
 } from "@/features/projects";
@@ -64,22 +66,25 @@ export default async function ProjectPage({ params }: PageProps<"/[tenant]/proje
   const canTime = hasPermission(ctx, "time.write");
   const fileScope = ctx.permissions.get("files.read");
   const canUpload = hasPermission(ctx, "files.write");
+  const canInvoice = hasPermission(ctx, "invoices.write") && project.clientId !== null;
   const statuses = ctx.tenant.settings.projectStatuses;
   const statusLabel = statuses.find((s) => s.key === project.status)?.label ?? project.status;
   const isDone = statuses.find((s) => s.key === project.status)?.done ?? false;
 
-  const [tasks, team, comments, files, economics, members, clients, customFields] = await Promise.all([
-    listTasks(database, ctx, project.id),
-    projectTeam(database, project.id),
-    listComments(database, ctx, "project", project.id),
-    fileScope
-      ? listFiles(database, ctx, fileScope, { entityType: "project", entityId: project.id })
-      : Promise.resolve([]),
-    canWrite ? projectEconomics(database, project.id) : Promise.resolve(null),
-    memberOptions(database, ctx.tenant.id),
-    canWrite ? clientOptions(database, ctx.tenant.id) : Promise.resolve([]),
-    customFieldsFor(database, ctx.tenant.id, "project"),
-  ]);
+  const [tasks, team, comments, files, economics, members, clients, customFields, unbilled] =
+    await Promise.all([
+      listTasks(database, ctx, project.id),
+      projectTeam(database, project.id),
+      listComments(database, ctx, "project", project.id),
+      fileScope
+        ? listFiles(database, ctx, fileScope, { entityType: "project", entityId: project.id })
+        : Promise.resolve([]),
+      canWrite ? projectEconomics(database, project.id) : Promise.resolve(null),
+      memberOptions(database, ctx.tenant.id),
+      canWrite ? clientOptions(database, ctx.tenant.id) : Promise.resolve([]),
+      customFieldsFor(database, ctx.tenant.id, "project"),
+      canWrite || canInvoice ? unbilledTime(database, ctx.tenant.id, project.id) : Promise.resolve(null),
+    ]);
   const teamOptions = team.map((m) => ({ value: m.membershipId, label: m.name }));
   const assigneeOptions = teamOptions.length > 0 ? teamOptions : members;
   const addable = members.filter((m) => !team.some((x) => x.membershipId === m.value));
@@ -102,6 +107,20 @@ export default async function ProjectPage({ params }: PageProps<"/[tenant]/proje
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {canInvoice && unbilled && unbilled.count > 0 ? (
+            <ActionButton
+              action={invoiceUnbilledTimeAction.bind(null, tenant)}
+              values={{ projectId: project.id }}
+              variant="outline"
+              size="default"
+              confirm={t("projects.invoiceTimeConfirm", {
+                time: f.minutes(unbilled.minutes),
+                value: f.money(unbilled.valueMinor),
+              })}
+            >
+              {t("projects.invoiceTime")}
+            </ActionButton>
+          ) : null}
           {canTime ? (
             <FormDialog
               trigger={t("projects.logTime")}
@@ -170,7 +189,18 @@ export default async function ProjectPage({ params }: PageProps<"/[tenant]/proje
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard label={t("projects.timeLogged")} value={f.minutes(economics.minutes)} />
           <StatCard label={t("projects.cost")} value={f.money(economics.costMinor)} />
-          <StatCard label={t("projects.billable")} value={f.money(economics.billableMinor)} />
+          <StatCard
+            label={t("projects.billable")}
+            value={f.money(economics.billableMinor)}
+            hint={
+              unbilled && unbilled.count > 0
+                ? `${t("projects.unbilled")}: ${t("projects.unbilledHint", {
+                    time: f.minutes(unbilled.minutes),
+                    value: f.money(unbilled.valueMinor),
+                  })}`
+                : undefined
+            }
+          />
           <StatCard
             label={t("projects.budget")}
             value={project.budgetMinor > 0n ? f.money(project.budgetMinor) : "—"}

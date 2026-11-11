@@ -5,6 +5,7 @@ import { CheckboxField, TextField } from "@/components/form/field";
 import { FormDialog } from "@/components/form/form-dialog";
 import { EmptyState, PageHeader, Section } from "@/components/layout/page";
 import { Badge } from "@/components/ui/badge";
+import { ButtonLink } from "@/components/ui/button-link";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   deleteFileAction,
@@ -16,12 +17,13 @@ import {
   type FileEntity,
 } from "@/features/files";
 import { t } from "@/i18n";
-import { appHref } from "@/lib/href";
+import { appHref, tenantHref } from "@/lib/href";
 import { requireTenantPermission } from "@/server/auth/session";
 import { db } from "@/server/db";
 import { clientOptions, projectOptions } from "@/server/options";
 import { hasPermission } from "@/server/tenancy/context";
 
+const PAGE = 50;
 const ENTITIES: readonly FileEntity[] = ["general", "client", "project", "transaction"];
 
 export default async function FilesPage({ params, searchParams }: PageProps<"/[tenant]/files">) {
@@ -30,13 +32,19 @@ export default async function FilesPage({ params, searchParams }: PageProps<"/[t
   const { ctx, scope } = await requireTenantPermission(tenant, "files.read");
   const f = formatters(ctx);
   const entityType = ENTITIES.find((e) => e === param(sp, "type"));
+  const limit = Math.min(Number(param(sp, "limit")) || PAGE, 1000);
   const canWrite = hasPermission(ctx, "files.write");
   const database = db();
-  const [files, clients, projects] = await Promise.all([
-    listFiles(database, ctx, scope, { entityType }),
+  const [rows, clients, projects] = await Promise.all([
+    listFiles(database, ctx, scope, { entityType, limit: limit + 1 }),
     clientOptions(database, ctx.tenant.id),
     projectOptions(database, ctx.tenant.id),
   ]);
+  const hasMore = rows.length > limit;
+  const files = rows.slice(0, limit);
+  const next = new URLSearchParams();
+  if (entityType) next.set("type", entityType);
+  next.set("limit", String(limit + PAGE));
   const names = new Map([...clients, ...projects].map((o) => [o.value, o.label]));
 
   return (
@@ -133,6 +141,15 @@ export default async function FilesPage({ params, searchParams }: PageProps<"/[t
             </TableBody>
           </Table>
         )}
+        {hasMore ? (
+          <ButtonLink
+            href={tenantHref(tenant, `files?${next.toString()}`)}
+            variant="outline"
+            className="justify-self-center"
+          >
+            {t("list.loadMore")}
+          </ButtonLink>
+        ) : null}
       </Section>
     </div>
   );

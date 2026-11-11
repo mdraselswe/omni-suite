@@ -4,6 +4,7 @@ import { StatusBadge } from "@/components/data/status-badge";
 import { ActionButton } from "@/components/form/action-button";
 import { ActionForm, SubmitButton } from "@/components/form/action-form";
 import { TextAreaField } from "@/components/form/field";
+import { FormDialog } from "@/components/form/form-dialog";
 import { EmptyState, PageHeader, Section } from "@/components/layout/page";
 import { Badge } from "@/components/ui/badge";
 import { ButtonAnchor, ButtonLink } from "@/components/ui/button-link";
@@ -14,6 +15,7 @@ import {
   getProject,
   listComments,
   listTasks,
+  requestTaskChangesAction,
 } from "@/features/projects";
 import { t } from "@/i18n";
 import { formatDateTime } from "@/lib/dates";
@@ -92,14 +94,30 @@ export default async function PortalProject({ params }: PageProps<"/[tenant]/por
                     </span>
                   </span>
                   {waiting && canApprove ? (
-                    <ActionButton
-                      action={approveTaskAction.bind(null, tenant)}
-                      values={{ id: task.id }}
-                      variant="default"
-                      confirm={t("form.confirm")}
-                    >
-                      {t("portal.approve")}
-                    </ActionButton>
+                    <span className="flex flex-wrap gap-2">
+                      <FormDialog
+                        trigger={t("tasks.requestChanges")}
+                        title={t("tasks.requestChanges")}
+                        description={t("tasks.requestChangesSub")}
+                        action={requestTaskChangesAction.bind(null, tenant)}
+                        submitLabel={t("tasks.requestChanges")}
+                        variant="outline"
+                        size="sm"
+                        icon={false}
+                      >
+                        <input type="hidden" name="id" value={task.id} />
+                        <p className="text-sm font-medium">{task.title}</p>
+                        <TextAreaField name="comment" label={t("tasks.changesLabel")} rows={4} required />
+                      </FormDialog>
+                      <ActionButton
+                        action={approveTaskAction.bind(null, tenant)}
+                        values={{ id: task.id }}
+                        variant="default"
+                        confirm={t("form.confirm")}
+                      >
+                        {t("portal.approve")}
+                      </ActionButton>
+                    </span>
                   ) : null}
                 </li>
               );

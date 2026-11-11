@@ -40,6 +40,10 @@ export default async function TimePage({ params, searchParams }: PageProps<"/[te
   ]);
   const total = entries.reduce((s, e) => s + e.entry.minutes, 0);
   const billable = entries.reduce((s, e) => s + (e.entry.billable ? e.entry.minutes : 0), 0);
+  const unbilled = entries.reduce(
+    (s, e) => s + (e.entry.billable && !e.entry.invoiceId ? e.entry.minutes : 0),
+    0,
+  );
 
   return (
     <div className="grid gap-8">
@@ -85,6 +89,7 @@ export default async function TimePage({ params, searchParams }: PageProps<"/[te
           hint={t("time.entries", { count: entries.length })}
         />
         <StatCard label={t("time.billableTotal")} value={f.minutes(billable)} />
+        <StatCard label={t("time.unbilled")} value={f.minutes(unbilled)} />
       </div>
 
       <Section title={t("time.title")}>
@@ -118,6 +123,13 @@ export default async function TimePage({ params, searchParams }: PageProps<"/[te
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span>{projectName}</span>
                       {entry.billable ? <Badge variant="outline">{t("time.billable")}</Badge> : null}
+                      {entry.billable ? (
+                        entry.invoiceId ? (
+                          <Badge variant="secondary">{t("time.billed")}</Badge>
+                        ) : (
+                          <Badge variant="outline">{t("time.unbilled")}</Badge>
+                        )
+                      ) : null}
                     </div>
                   </TableCell>
                   <TableCell className="hidden md:table-cell">{memberName}</TableCell>
@@ -125,7 +137,8 @@ export default async function TimePage({ params, searchParams }: PageProps<"/[te
                   <TableCell className="text-right tabular-nums">{f.minutes(entry.minutes)}</TableCell>
                   {writeScope ? (
                     <TableCell>
-                      {writeScope === "all" || entry.membershipId === ctx.membership.id ? (
+                      {!entry.invoiceId &&
+                      (writeScope === "all" || entry.membershipId === ctx.membership.id) ? (
                         <ActionButton
                           action={deleteTimeAction.bind(null, tenant)}
                           values={{ id: entry.id }}

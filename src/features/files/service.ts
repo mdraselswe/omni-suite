@@ -5,10 +5,13 @@ import { t } from "@/i18n";
 import { UserError } from "@/server/action";
 import { audit, markChanged } from "@/server/audit";
 import type { Database, DbOrTx } from "@/server/db";
-import { clients, files, projectMembers, projects, user } from "@/server/db/schema";
+import { clients, files, projectMembers, projects, transactions, user } from "@/server/db/schema";
 import type { Scope } from "@/server/rbac/resolve";
+import { notify, usersWithPermission } from "@/server/shared";
 import { removeFile, storeFile } from "@/server/storage";
 import type { TenantContext } from "@/server/tenancy/context";
+import { clientScopeFilter } from "@/features/clients";
+import { projectScopeFilter } from "@/features/projects";
 
 export type FileEntity = "project" | "client" | "transaction" | "general";
 
@@ -43,7 +46,7 @@ export async function listFiles(
   database: DbOrTx,
   ctx: TenantContext,
   scope: Scope,
-  filter: { entityType?: FileEntity; entityId?: string } = {},
+  filter: { entityType?: FileEntity; entityId?: string; limit?: number } = {},
 ) {
   return database
     .select({ file: files, uploaderName: user.name })
@@ -58,7 +61,7 @@ export async function listFiles(
       ),
     )
     .orderBy(desc(files.createdAt))
-    .limit(500);
+    .limit(filter.limit ?? 500);
 }
 
 export async function fileForDownload(database: DbOrTx, ctx: TenantContext, scope: Scope, id: string) {
@@ -69,30 +72,60 @@ export async function fileForDownload(database: DbOrTx, ctx: TenantContext, scop
   return row ?? null;
 }
 
-async function assertEntity(tx: DbOrTx, ctx: TenantContext, entityType: FileEntity, entityId: string | null) {
-  if (entityType === "general") return;
-  if (!entityId) throw new UserError(t("form.invalid"));
-  if (ctx.membership.kind === "client") {
-    const clientId = ctx.membership.clientId;
-    const ok =
-      (entityType === "client" && entityId === clientId) ||
-      (entityType === "project" &&
-        (
-          await tx
-            .select({ id: projects.id })
-            .from(projects)
-            .where(and(eq(projects.id, entityId), eq(projects.clientId, clientId ?? "")))
-        ).length > 0);
-    if (!ok) throw new UserError(t("projects.missing"));
-    return;
+type Target = { name: string; link: string };
+
+/**
+ * Checks the upload target is one the uploader may write to and returns its name and link.
+ * Clients: their own client record or its projects. Staff: targets inside their files.write
+ * scope (a project they are on or created, a client they work for; "all" reaches any).
+ */
+async function assertTarget(
+  tx: DbOrTx,
+  ctx: TenantContext,
+  entityType: FileEntity,
+  entityId: string | null,
+): Promise<Target> {
+  const base = `/${ctx.tenant.slug}`;
+  const isClient = ctx.membership.kind === "client";
+  const scope: Scope | undefined = isClient ? "all" : ctx.permissions.get("files.write");
+  if (!scope) throw new UserError(t("files.badTarget"));
+  if (entityType === "general") {
+    if (isClient) throw new UserError(t("files.badTarget"));
+    return { name: t("files.entity.general"), link: `${base}/files` };
   }
-  const table = entityType === "project" ? projects : entityType === "client" ? clients : null;
-  if (!table) return;
-  const found = await tx
-    .select({ id: table.id })
-    .from(table)
-    .where(and(eq(table.id, entityId), eq(table.tenantId, ctx.tenant.id)));
-  if (found.length === 0) throw new UserError(t("projects.missing"));
+  if (!entityId) throw new UserError(t("form.invalid"));
+  if (entityType === "project") {
+    const [p] = await tx
+      .select({ id: projects.id, name: projects.name })
+      .from(projects)
+      .where(
+        and(eq(projects.id, entityId), eq(projects.tenantId, ctx.tenant.id), projectScopeFilter(ctx, scope)),
+      );
+    if (!p) throw new UserError(t("files.badTarget"));
+    return { name: p.name, link: `${base}/projects/${p.id}` };
+  }
+  if (entityType === "client") {
+    const [c] = await tx
+      .select({ id: clients.id, name: clients.name })
+      .from(clients)
+      .where(
+        and(
+          eq(clients.id, entityId),
+          eq(clients.tenantId, ctx.tenant.id),
+          isClient ? eq(clients.id, ctx.membership.clientId ?? "") : clientScopeFilter(ctx, scope),
+        ),
+      );
+    if (!c) throw new UserError(t("files.badTarget"));
+    return { name: c.name, link: `${base}/clients/${c.id}` };
+  }
+  // Receipts on ledger transactions: staff who can see the ledger.
+  if (isClient || !ctx.permissions.has("finance.read")) throw new UserError(t("files.badTarget"));
+  const [tr] = await tx
+    .select({ id: transactions.id })
+    .from(transactions)
+    .where(and(eq(transactions.id, entityId), eq(transactions.tenantId, ctx.tenant.id)));
+  if (!tr) throw new UserError(t("files.badTarget"));
+  return { name: t("files.entity.transaction"), link: `${base}/finance` };
 }
 
 export async function uploadFile(
@@ -103,7 +136,8 @@ export async function uploadFile(
   const max = serverEnv().MAX_UPLOAD_MB;
   if (input.file.size === 0) throw new UserError(t("files.empty"));
   if (input.file.size > max * 1024 * 1024) throw new UserError(t("files.tooLarge", { mb: max }));
-  await assertEntity(database, ctx, input.entityType, input.entityId);
+  const target = await assertTarget(database, ctx, input.entityType, input.entityId);
+  const isClient = ctx.membership.kind === "client";
   const key = await storeFile(ctx.tenant.id, new Uint8Array(await input.file.arrayBuffer()));
   try {
     return await database.transaction(async (tx) => {
@@ -117,8 +151,11 @@ export async function uploadFile(
           mime: input.file.type || "application/octet-stream",
           size: input.file.size,
           storageKey: key,
-          // Files uploaded by a client are shared with them by definition.
-          clientVisible: ctx.membership.kind === "client" ? true : input.clientVisible,
+          // Files uploaded by a client are shared with them by definition; general and
+          // ledger files never reach the portal.
+          clientVisible: isClient
+            ? true
+            : input.clientVisible && (input.entityType === "project" || input.entityType === "client"),
           uploadedBy: ctx.user.id,
         })
         .returning({ id: files.id });
@@ -132,6 +169,17 @@ export async function uploadFile(
         data: { name: input.file.name, size: input.file.size },
       });
       await markChanged(tx, ctx.tenant.id, "file", row.id);
+      if (isClient) {
+        // Tell the team a client sent something (staff without access to the target simply get a 404).
+        const team = (await usersWithPermission(tx, ctx.tenant.id, "files.read")).filter(
+          (id) => id !== ctx.user.id,
+        );
+        await notify(tx, ctx.tenant.id, team, {
+          title: t("files.clientUploadedTitle", { name: input.file.name.slice(0, 100), target: target.name }),
+          body: ctx.user.name,
+          link: target.link,
+        });
+      }
       return row.id;
     });
   } catch (error) {

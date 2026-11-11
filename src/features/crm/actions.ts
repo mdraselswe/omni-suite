@@ -6,7 +6,7 @@ import { customValues, fields, formObject, runAction, type ActionState } from "@
 import { actionContext } from "@/server/auth/session";
 import { db } from "@/server/db";
 import { customFieldsFor } from "@/server/shared";
-import { convertLead, createLead, moveLead, updateLead } from "./service";
+import { convertLead, createLead, moveLead, setLeadArchived, updateLead } from "./service";
 
 async function parseLead(slug: string, formData: FormData, permission: "leads.write") {
   const { ctx, scope } = await actionContext(slug, permission);
@@ -79,4 +79,18 @@ export async function convertLeadAction(
   });
   if (state?.ok && clientId) redirect(`/${slug}/clients/${clientId}` as "/");
   return state;
+}
+
+export async function archiveLeadAction(
+  slug: string,
+  _p: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  return runAction(async () => {
+    const { ctx, scope } = await actionContext(slug, "leads.write");
+    const { id, archived } = z
+      .object({ id: fields.id(), archived: z.enum(["true", "false"]) })
+      .parse(formObject(formData));
+    await setLeadArchived(db(), ctx, scope, id, archived === "true");
+  });
 }

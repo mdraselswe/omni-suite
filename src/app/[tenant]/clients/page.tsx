@@ -6,6 +6,7 @@ import { CustomFieldInputs } from "@/components/form/custom-field-inputs";
 import { Field, TextAreaField, TextField } from "@/components/form/field";
 import { FormDialog } from "@/components/form/form-dialog";
 import { EmptyState, Section } from "@/components/layout/page";
+import { ButtonLink } from "@/components/ui/button-link";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { createClientAction, importClientsAction, listClients } from "@/features/clients";
@@ -16,6 +17,8 @@ import { db } from "@/server/db";
 import { customFieldsFor } from "@/server/shared";
 import { hasPermission } from "@/server/tenancy/context";
 
+const PAGE = 50;
+
 export default async function ClientsPage({ params, searchParams }: PageProps<"/[tenant]/clients">) {
   const { tenant } = await params;
   const sp = await searchParams;
@@ -24,12 +27,18 @@ export default async function ClientsPage({ params, searchParams }: PageProps<"/
   const q = param(sp, "q") || undefined;
   const statusParam = param(sp, "status");
   const status = statusParam === "active" || statusParam === "inactive" ? statusParam : undefined;
+  const limit = Math.min(Number(param(sp, "limit")) || PAGE, 1000);
   const canWrite = hasPermission(ctx, "clients.write");
   const database = db();
-  const [rows, defs] = await Promise.all([
-    listClients(database, ctx, scope, { q, status }),
+  const [loaded, defs] = await Promise.all([
+    listClients(database, ctx, scope, { q, status, limit: limit + 1 }),
     customFieldsFor(database, ctx.tenant.id, "client"),
   ]);
+  const hasMore = loaded.length > limit;
+  const rows = loaded.slice(0, limit);
+  const next = new URLSearchParams();
+  for (const [k, v] of Object.entries({ q, status })) if (v) next.set(k, v);
+  next.set("limit", String(limit + PAGE));
 
   return (
     <Section
@@ -40,7 +49,7 @@ export default async function ClientsPage({ params, searchParams }: PageProps<"/
             <FormDialog
               trigger={t("clients.import")}
               title={t("clients.import")}
-              description={t("clients.importHint")}
+              description={t("clients.importHintCustom")}
               action={importClientsAction.bind(null, tenant)}
               submitLabel={t("clients.import")}
               variant="outline"
@@ -118,6 +127,15 @@ export default async function ClientsPage({ params, searchParams }: PageProps<"/
           </TableBody>
         </Table>
       )}
+      {hasMore ? (
+        <ButtonLink
+          href={tenantHref(tenant, `clients?${next.toString()}`)}
+          variant="outline"
+          className="justify-self-center"
+        >
+          {t("list.loadMore")}
+        </ButtonLink>
+      ) : null}
     </Section>
   );
 }

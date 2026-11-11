@@ -1,7 +1,8 @@
 import "server-only";
-import { and, asc, desc, eq, gte, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ilike, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import { t } from "@/i18n";
 import type { CustomValues } from "@/lib/custom-fields";
+import { addDays } from "@/lib/dates";
 import { UserError } from "@/server/action";
 import { audit, markChanged } from "@/server/audit";
 import type { Database, DbOrTx } from "@/server/db";
@@ -20,6 +21,8 @@ import {
 import type { Scope } from "@/server/rbac/resolve";
 import { clientUserIds, notify, usersWithPermission } from "@/server/shared";
 import type { TenantContext } from "@/server/tenancy/context";
+import { actorOf, insertInvoice } from "@/features/invoices";
+import { timeInvoiceLines } from "./time-invoice";
 
 /* ─── Scope filters ────────────────────────────────────────────── */
 
@@ -37,14 +40,39 @@ export function projectScopeFilter(ctx: TenantContext, scope: Scope): SQL | unde
     : eq(projects.createdBy, ctx.user.id);
 }
 
+/** Throws unless the membership is an active internal member of this tenant (ids from forms). */
+async function assertTeamMember(tx: DbOrTx, ctx: TenantContext, membershipId: string, message: string) {
+  const [m] = await tx
+    .select({ id: memberships.id })
+    .from(memberships)
+    .where(
+      and(
+        eq(memberships.id, membershipId),
+        eq(memberships.tenantId, ctx.tenant.id),
+        eq(memberships.kind, "internal"),
+        eq(memberships.status, "active"),
+      ),
+    );
+  if (!m) throw new UserError(message);
+}
+
+async function assertClientInTenant(tx: DbOrTx, ctx: TenantContext, clientId: string) {
+  const [c] = await tx
+    .select({ id: clients.id })
+    .from(clients)
+    .where(and(eq(clients.id, clientId), eq(clients.tenantId, ctx.tenant.id)));
+  if (!c) throw new UserError(t("clients.missing"));
+}
+
 /* ─── Projects ─────────────────────────────────────────────────── */
 
 export async function listProjects(
   database: DbOrTx,
   ctx: TenantContext,
   scope: Scope,
-  filter: { status?: string; clientId?: string } = {},
+  filter: { status?: string; clientId?: string; q?: string; limit?: number } = {},
 ) {
+  const q = filter.q?.replace(/[%_\\]/g, "").trim();
   const taskCounts = sql<string>`(select count(*) from ${tasks} where ${tasks.projectId} = ${projects.id})`;
   const doneCounts = sql<string>`(select count(*) from ${tasks} where ${tasks.projectId} = ${projects.id} and ${tasks.status} = 'done')`;
   const rows = await database
@@ -57,10 +85,11 @@ export async function listProjects(
         projectScopeFilter(ctx, scope),
         filter.status ? eq(projects.status, filter.status) : undefined,
         filter.clientId ? eq(projects.clientId, filter.clientId) : undefined,
+        q ? or(ilike(projects.name, `%${q}%`), ilike(clients.name, `%${q}%`)) : undefined,
       ),
     )
     .orderBy(desc(projects.createdAt))
-    .limit(500);
+    .limit(filter.limit ?? 500);
   return rows.map((r) => ({
     ...r.project,
     clientName: r.clientName,
@@ -101,13 +130,7 @@ export async function createProject(
 ): Promise<string> {
   assertStatus(ctx, input.status);
   return database.transaction(async (tx) => {
-    if (input.clientId) {
-      const [c] = await tx
-        .select({ id: clients.id })
-        .from(clients)
-        .where(and(eq(clients.id, input.clientId), eq(clients.tenantId, ctx.tenant.id)));
-      if (!c) throw new UserError(t("clients.missing"));
-    }
+    if (input.clientId) await assertClientInTenant(tx, ctx, input.clientId);
     const { templateId, ...values } = input;
     const [row] = await tx
       .insert(projects)
@@ -157,6 +180,7 @@ export async function updateProject(
 ) {
   assertStatus(ctx, input.status);
   await database.transaction(async (tx) => {
+    if (input.clientId) await assertClientInTenant(tx, ctx, input.clientId);
     const [row] = await tx
       .update(projects)
       .set({ ...input, updatedAt: new Date() })
@@ -236,17 +260,55 @@ export async function saveProjectTemplate(
   database: Database,
   ctx: TenantContext,
   input: { id: string | null; name: string; tasks: { title: string; clientVisible: boolean }[] },
-) {
-  if (input.id) {
-    await database
-      .update(projectTemplates)
-      .set({ name: input.name, tasks: input.tasks })
-      .where(and(eq(projectTemplates.id, input.id), eq(projectTemplates.tenantId, ctx.tenant.id)));
-  } else {
-    await database
-      .insert(projectTemplates)
-      .values({ tenantId: ctx.tenant.id, name: input.name, tasks: input.tasks });
-  }
+): Promise<string> {
+  return database.transaction(async (tx) => {
+    let id: string | undefined;
+    if (input.id) {
+      const [row] = await tx
+        .update(projectTemplates)
+        .set({ name: input.name, tasks: input.tasks })
+        .where(and(eq(projectTemplates.id, input.id), eq(projectTemplates.tenantId, ctx.tenant.id)))
+        .returning({ id: projectTemplates.id });
+      id = row?.id;
+    } else {
+      const [row] = await tx
+        .insert(projectTemplates)
+        .values({ tenantId: ctx.tenant.id, name: input.name, tasks: input.tasks })
+        .returning({ id: projectTemplates.id });
+      id = row?.id;
+    }
+    if (!id) throw new UserError(t("form.invalid"));
+    await audit(tx, {
+      tenantId: ctx.tenant.id,
+      actorUserId: ctx.user.id,
+      action: "projectTemplate.save",
+      entityType: "projectTemplate",
+      entityId: id,
+      data: { name: input.name, tasks: input.tasks.length },
+    });
+    await markChanged(tx, ctx.tenant.id, "projectTemplate", id);
+    return id;
+  });
+}
+
+/** Templates are copied into a project when it is created, so deleting one never touches projects. */
+export async function deleteProjectTemplate(database: Database, ctx: TenantContext, id: string) {
+  await database.transaction(async (tx) => {
+    const [row] = await tx
+      .delete(projectTemplates)
+      .where(and(eq(projectTemplates.id, id), eq(projectTemplates.tenantId, ctx.tenant.id)))
+      .returning({ name: projectTemplates.name });
+    if (!row) throw new UserError(t("form.invalid"));
+    await audit(tx, {
+      tenantId: ctx.tenant.id,
+      actorUserId: ctx.user.id,
+      action: "projectTemplate.delete",
+      entityType: "projectTemplate",
+      entityId: id,
+      data: { name: row.name },
+    });
+    await markChanged(tx, ctx.tenant.id, "projectTemplate", id, "delete");
+  });
 }
 
 /* ─── Tasks ────────────────────────────────────────────────────── */
@@ -337,6 +399,8 @@ export async function createTask(
       .from(projects)
       .where(and(eq(projects.id, projectId), eq(projects.tenantId, ctx.tenant.id)));
     if (!p) throw new UserError(t("projects.missing"));
+    if (input.assigneeMembershipId)
+      await assertTeamMember(tx, ctx, input.assigneeMembershipId, t("tasks.badAssignee"));
     await assertTaskScope(
       tx,
       ctx,
@@ -387,6 +451,8 @@ export async function updateTask(
 ) {
   await database.transaction(async (tx) => {
     const task = await loadTaskForWrite(tx, ctx, scope, id);
+    if (input.assigneeMembershipId && input.assigneeMembershipId !== task.assigneeMembershipId)
+      await assertTeamMember(tx, ctx, input.assigneeMembershipId, t("tasks.badAssignee"));
     await tx
       .update(tasks)
       .set({
@@ -457,6 +523,72 @@ export async function approveTask(database: Database, ctx: TenantContext, id: st
   });
 }
 
+/** Client sends a task under review back to the team with a note (portal). */
+export async function requestTaskChanges(
+  database: Database,
+  ctx: TenantContext,
+  id: string,
+  comment: string,
+) {
+  const note = comment.trim();
+  if (!note) throw new UserError(t("form.required"));
+  await database.transaction(async (tx) => {
+    const [row] = await tx
+      .select({ task: tasks, clientId: projects.clientId })
+      .from(tasks)
+      .innerJoin(projects, eq(projects.id, tasks.projectId))
+      .where(and(eq(tasks.id, id), eq(tasks.tenantId, ctx.tenant.id)))
+      .for("update", { of: tasks });
+    if (
+      !row ||
+      ctx.membership.kind !== "client" ||
+      !row.task.needsApproval ||
+      !row.task.clientVisible ||
+      row.clientId !== ctx.membership.clientId
+    ) {
+      throw new UserError(t("tasks.missing"));
+    }
+    if (row.task.status !== "review") throw new UserError(t("tasks.notInReview"));
+    await tx
+      .update(tasks)
+      .set({ status: "in_progress", approvedAt: null, approvedBy: null, updatedAt: new Date() })
+      .where(eq(tasks.id, id));
+    // The note goes on the project discussion so both sides see it.
+    await tx.insert(comments).values({
+      tenantId: ctx.tenant.id,
+      entityType: "project",
+      entityId: row.task.projectId,
+      authorUserId: ctx.user.id,
+      body: t("tasks.changesComment", { title: row.task.title, comment: note }),
+      clientVisible: true,
+    });
+    let recipients: string[] = [];
+    if (row.task.assigneeMembershipId) {
+      const [assignee] = await tx
+        .select({ userId: memberships.userId })
+        .from(memberships)
+        .where(and(eq(memberships.id, row.task.assigneeMembershipId), eq(memberships.status, "active")));
+      if (assignee) recipients = [assignee.userId];
+    }
+    if (recipients.length === 0) recipients = await usersWithPermission(tx, ctx.tenant.id, "projects.write");
+    await notify(tx, ctx.tenant.id, recipients, {
+      title: t("tasks.changesTitle", { title: row.task.title }),
+      body: note.slice(0, 200),
+      link: `/${ctx.tenant.slug}/projects/${row.task.projectId}`,
+      email: true,
+    });
+    await audit(tx, {
+      tenantId: ctx.tenant.id,
+      actorUserId: ctx.user.id,
+      action: "task.requestChanges",
+      entityType: "task",
+      entityId: id,
+      data: { comment: note.slice(0, 500) },
+    });
+    await markChanged(tx, ctx.tenant.id, "task", id);
+  });
+}
+
 export async function deleteTask(database: Database, ctx: TenantContext, scope: Scope, id: string) {
   await database.transaction(async (tx) => {
     await loadTaskForWrite(tx, ctx, scope, id);
@@ -500,14 +632,22 @@ export async function addComment(
   ctx: TenantContext,
   input: { projectId: string; body: string; clientVisible: boolean },
 ) {
+  const isClient = ctx.membership.kind === "client";
+  // Staff comment only on projects their projects.read scope shows them.
+  const scope = isClient ? "all" : ctx.permissions.get("projects.read");
+  if (!scope) throw new UserError(t("projects.missing"));
   await database.transaction(async (tx) => {
     const [p] = await tx
       .select({ id: projects.id, clientId: projects.clientId, name: projects.name })
       .from(projects)
-      .where(and(eq(projects.id, input.projectId), eq(projects.tenantId, ctx.tenant.id)));
-    const isClient = ctx.membership.kind === "client";
-    if (!p || (isClient && p.clientId !== ctx.membership.clientId))
-      throw new UserError(t("projects.missing"));
+      .where(
+        and(
+          eq(projects.id, input.projectId),
+          eq(projects.tenantId, ctx.tenant.id),
+          projectScopeFilter(ctx, scope),
+        ),
+      );
+    if (!p) throw new UserError(t("projects.missing"));
     const visible = isClient ? true : input.clientVisible;
     await tx.insert(comments).values({
       tenantId: ctx.tenant.id,
@@ -602,6 +742,21 @@ export async function logTime(
         ),
       );
     if (!p) throw new UserError(t("projects.missing"));
+    if (membershipId !== ctx.membership.id)
+      await assertTeamMember(tx, ctx, membershipId, t("time.badMember"));
+    if (input.taskId) {
+      const [task] = await tx
+        .select({ id: tasks.id })
+        .from(tasks)
+        .where(
+          and(
+            eq(tasks.id, input.taskId),
+            eq(tasks.tenantId, ctx.tenant.id),
+            eq(tasks.projectId, input.projectId),
+          ),
+        );
+      if (!task) throw new UserError(t("time.badTask"));
+    }
     const [rate] = await tx.select().from(memberRates).where(eq(memberRates.membershipId, membershipId));
     const [row] = await tx
       .insert(timeEntries)
@@ -623,17 +778,20 @@ export async function logTime(
 
 export async function deleteTime(database: Database, ctx: TenantContext, scope: Scope, id: string) {
   await database.transaction(async (tx) => {
+    const mine = and(
+      eq(timeEntries.id, id),
+      eq(timeEntries.tenantId, ctx.tenant.id),
+      scope === "all" ? undefined : eq(timeEntries.membershipId, ctx.membership.id),
+    );
+    // Billed time stays: the invoice was built from it.
     const [row] = await tx
       .delete(timeEntries)
-      .where(
-        and(
-          eq(timeEntries.id, id),
-          eq(timeEntries.tenantId, ctx.tenant.id),
-          scope === "all" ? undefined : eq(timeEntries.membershipId, ctx.membership.id),
-        ),
-      )
+      .where(and(mine, isNull(timeEntries.invoiceId)))
       .returning({ id: timeEntries.id });
-    if (!row) throw new UserError(t("tasks.notAssigned"));
+    if (!row) {
+      const [billed] = await tx.select({ id: timeEntries.id }).from(timeEntries).where(mine);
+      throw new UserError(billed ? t("time.alreadyBilled") : t("tasks.notAssigned"));
+    }
     await markChanged(tx, ctx.tenant.id, "time", id, "delete");
   });
 }
@@ -682,16 +840,118 @@ export async function setRate(
   ctx: TenantContext,
   input: { membershipId: string; costRateMinor: bigint; billRateMinor: bigint },
 ) {
-  const [m] = await database
-    .select({ id: memberships.id })
-    .from(memberships)
-    .where(and(eq(memberships.id, input.membershipId), eq(memberships.tenantId, ctx.tenant.id)));
-  if (!m) throw new UserError(t("team.memberMissing"));
-  await database
-    .insert(memberRates)
-    .values(input)
-    .onConflictDoUpdate({
-      target: memberRates.membershipId,
-      set: { costRateMinor: input.costRateMinor, billRateMinor: input.billRateMinor },
+  await database.transaction(async (tx) => {
+    await assertTeamMember(tx, ctx, input.membershipId, t("team.memberMissing"));
+    await tx
+      .insert(memberRates)
+      .values(input)
+      .onConflictDoUpdate({
+        target: memberRates.membershipId,
+        set: { costRateMinor: input.costRateMinor, billRateMinor: input.billRateMinor },
+      });
+    await audit(tx, {
+      tenantId: ctx.tenant.id,
+      actorUserId: ctx.user.id,
+      action: "member.rate",
+      entityType: "membership",
+      entityId: input.membershipId,
+      data: { costRateMinor: input.costRateMinor, billRateMinor: input.billRateMinor },
     });
+    await markChanged(tx, ctx.tenant.id, "memberRate", input.membershipId);
+  });
+}
+
+/* ─── Billing time ─────────────────────────────────────────────── */
+
+const unbilled = (tenantId: string, projectId: string) =>
+  and(
+    eq(timeEntries.tenantId, tenantId),
+    eq(timeEntries.projectId, projectId),
+    eq(timeEntries.billable, true),
+    isNull(timeEntries.invoiceId),
+  );
+
+/** Billable time on a project that is not on an invoice yet. */
+export async function unbilledTime(database: DbOrTx, tenantId: string, projectId: string) {
+  const [row] = await database
+    .select({
+      count: sql<number>`count(*)::int`,
+      minutes: sql<string>`coalesce(sum(${timeEntries.minutes}), 0)`,
+      value: sql<string>`coalesce(sum(${timeEntries.minutes} * ${timeEntries.hourlyRateMinor} / 60), 0)`,
+    })
+    .from(timeEntries)
+    .where(unbilled(tenantId, projectId));
+  return {
+    count: Number(row?.count ?? 0),
+    minutes: Number(row?.minutes ?? 0),
+    valueMinor: BigInt(String(row?.value ?? "0").split(".")[0] ?? "0"),
+  };
+}
+
+/**
+ * Draft invoice for a project's unbilled billable time: one line per person and rate,
+ * hours × hourly rate, the tenant's default tax. The entries are stamped with the
+ * invoice in the same transaction so they are never billed twice.
+ */
+export async function invoiceUnbilledTime(
+  database: Database,
+  ctx: TenantContext,
+  scope: Scope,
+  projectId: string,
+  today: string,
+): Promise<string> {
+  return database.transaction(async (tx) => {
+    const [project] = await tx
+      .select({ id: projects.id, name: projects.name, clientId: projects.clientId })
+      .from(projects)
+      .where(
+        and(eq(projects.id, projectId), eq(projects.tenantId, ctx.tenant.id), projectScopeFilter(ctx, scope)),
+      );
+    if (!project) throw new UserError(t("projects.missing"));
+    if (!project.clientId) throw new UserError(t("projects.noClient"));
+    // Lock the entries so two clicks cannot bill the same time twice.
+    const entries = await tx
+      .select({
+        id: timeEntries.id,
+        membershipId: timeEntries.membershipId,
+        minutes: timeEntries.minutes,
+        hourlyRateMinor: timeEntries.hourlyRateMinor,
+      })
+      .from(timeEntries)
+      .where(unbilled(ctx.tenant.id, project.id))
+      .orderBy(asc(timeEntries.date), asc(timeEntries.createdAt))
+      .for("update");
+    if (entries.length === 0) throw new UserError(t("projects.nothingToInvoice"));
+    const names = await tx
+      .select({ id: memberships.id, name: user.name })
+      .from(memberships)
+      .innerJoin(user, eq(user.id, memberships.userId))
+      .where(inArray(memberships.id, [...new Set(entries.map((e) => e.membershipId))]));
+    const nameOf = new Map(names.map((n) => [n.id, n.name]));
+    const items = timeInvoiceLines(entries, {
+      taxRateBp: ctx.tenant.settings.tax.rateBp,
+      describe: (membershipId) =>
+        t("projects.timeInvoiceLine", { member: nameOf.get(membershipId) ?? "—", project: project.name }),
+    });
+    const invoiceId = await insertInvoice(tx, actorOf(ctx), {
+      clientId: project.clientId,
+      issueDate: today,
+      dueDate: addDays(today, ctx.tenant.settings.paymentTermsDays),
+      items,
+      notes: t("projects.timeInvoiceNotes", { project: project.name }),
+      custom: {},
+    });
+    const ids = entries.map((e) => e.id);
+    await tx.update(timeEntries).set({ invoiceId }).where(inArray(timeEntries.id, ids));
+    await audit(tx, {
+      tenantId: ctx.tenant.id,
+      actorUserId: ctx.user.id,
+      action: "project.invoiceTime",
+      entityType: "project",
+      entityId: project.id,
+      data: { invoiceId, entries: ids.length },
+    });
+    for (const id of ids) await markChanged(tx, ctx.tenant.id, "time", id);
+    return invoiceId;
+  });
 }

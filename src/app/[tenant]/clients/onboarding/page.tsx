@@ -1,8 +1,14 @@
+import { ActionButton } from "@/components/form/action-button";
 import { TextAreaField, TextField } from "@/components/form/field";
 import { FormDialog } from "@/components/form/form-dialog";
 import { EmptyState, Section } from "@/components/layout/page";
 import { Badge } from "@/components/ui/badge";
-import { listTemplates, saveTemplateAction, type OnboardingField } from "@/features/clients";
+import {
+  deleteTemplateAction,
+  listTemplates,
+  saveTemplateAction,
+  type OnboardingField,
+} from "@/features/clients";
 import { t } from "@/i18n";
 import { requireTenantPermission } from "@/server/auth/session";
 import { db } from "@/server/db";
@@ -78,17 +84,27 @@ export default async function OnboardingTemplatesPage({ params }: PageProps<"/[t
                     })}
                   </p>
                 </div>
-                <FormDialog
-                  trigger={t("form.edit")}
-                  title={tp.name}
-                  action={action}
-                  variant="outline"
-                  size="sm"
-                  icon={false}
-                  wide
-                >
-                  <TemplateFields template={tp} />
-                </FormDialog>
+                <div className="flex flex-wrap gap-1">
+                  <FormDialog
+                    trigger={t("form.edit")}
+                    title={tp.name}
+                    action={action}
+                    variant="outline"
+                    size="sm"
+                    icon={false}
+                    wide
+                  >
+                    <TemplateFields template={tp} />
+                  </FormDialog>
+                  <ActionButton
+                    action={deleteTemplateAction.bind(null, tenant)}
+                    values={{ id: tp.id }}
+                    variant="ghost"
+                    confirm={t("onboarding.deleteTemplateConfirm")}
+                  >
+                    {t("form.delete")}
+                  </ActionButton>
+                </div>
               </div>
               {tp.fields.length > 0 ? (
                 <ul className="grid gap-1 text-sm">
