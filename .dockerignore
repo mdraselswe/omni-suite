@@ -1,0 +1,10 @@
+.git
+.next
+node_modules
+out
+storage
+coverage
+playwright-report
+test-results
+.env*
+!.env.example

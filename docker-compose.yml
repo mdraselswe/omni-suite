@@ -1,0 +1,29 @@
+# Local development: `docker compose up -d` starts Postgres and Mailpit.
+# Production adds the app and Caddy: see docker-compose.prod.yml and docs/deployment.md.
+services:
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: omnisuite
+      POSTGRES_PASSWORD: omnisuite
+      POSTGRES_DB: omnisuite
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U omnisuite"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # Inbox: http://localhost:8025
+
+volumes:
+  pgdata:

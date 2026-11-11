@@ -1,0 +1,11 @@
+{
+  "$comment": "Major versions we deliberately stay below, and why. scripts/freshness.ts fails CI for any other outdated major, and setup-project skips these. Keep in sync with the `ignore` list in .github/dependabot.yml. Re-check monthly; remove a hold when its blocker is fixed.",
+  "holds": [
+    {
+      "package": "typescript",
+      "below": 7,
+      "reason": "typescript-eslint supports TypeScript < 6.1",
+      "since": "2026-11-06"
+    }
+  ]
+}
