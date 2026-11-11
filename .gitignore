@@ -58,3 +58,6 @@ auto-upgrade-report.md
 
 # Playwright sign-in state
 /playwright/.auth/
+
+# Uploaded files (FILE_STORAGE_DIR)
+/storage/
