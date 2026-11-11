@@ -8,6 +8,7 @@ import type { Database, DbOrTx } from "@/server/db";
 import {
   capitalContributions,
   distributionRuns,
+  memberships,
   ownershipEvents,
   ownershipPeriods,
   partners,
@@ -16,8 +17,9 @@ import {
   timeEntries,
   transactions,
 } from "@/server/db/schema";
+import { notify } from "@/server/shared";
 import type { TenantContext } from "@/server/tenancy/context";
-import { insertTransaction, profitAndLoss, totalOfKind } from "@/features/finance/service";
+import { insertTransaction, profitAndLoss, totalOfKind } from "@/features/finance";
 import {
   calculateProfit,
   combineResults,
@@ -86,12 +88,43 @@ export async function listPartners(database: DbOrTx, tenantId: string, onDate: s
 
 export type PartnerRow = Awaited<ReturnType<typeof listPartners>>[number];
 
+/**
+ * A partner's app login must be an active team member of this business, linked to
+ * one partner only, so nobody can approve profit rules on someone else's behalf.
+ */
+async function assertMembershipLink(
+  tx: DbOrTx,
+  tenantId: string,
+  membershipId: string | null,
+  partnerId: string | null,
+): Promise<void> {
+  if (!membershipId) return;
+  const [member] = await tx
+    .select({ id: memberships.id })
+    .from(memberships)
+    .where(
+      and(
+        eq(memberships.id, membershipId),
+        eq(memberships.tenantId, tenantId),
+        eq(memberships.kind, "internal"),
+        eq(memberships.status, "active"),
+      ),
+    );
+  if (!member) throw new UserError(t("partners.memberMissing"));
+  const [taken] = await tx
+    .select({ id: partners.id })
+    .from(partners)
+    .where(and(eq(partners.tenantId, tenantId), eq(partners.membershipId, membershipId)));
+  if (taken && taken.id !== partnerId) throw new UserError(t("partners.memberTaken"));
+}
+
 export async function createPartner(
   database: Database,
   ctx: TenantContext,
   input: { name: string; email: string; joinedOn: string; membershipId: string | null },
 ): Promise<string> {
   return database.transaction(async (tx) => {
+    await assertMembershipLink(tx, ctx.tenant.id, input.membershipId, null);
     const [row] = await tx
       .insert(partners)
       .values({ tenantId: ctx.tenant.id, ...input })
@@ -117,6 +150,17 @@ export async function updatePartner(
   input: { name: string; email: string; membershipId: string | null; leftOn: string | null },
 ): Promise<void> {
   await database.transaction(async (tx) => {
+    const current = await assertPartner(tx, ctx.tenant.id, id);
+    await assertMembershipLink(tx, ctx.tenant.id, input.membershipId, id);
+    if (current.membershipId !== input.membershipId) {
+      // Relinking during a vote would let someone decide for another partner.
+      const [open] = await tx
+        .select({ id: profitRules.id })
+        .from(profitRules)
+        .where(and(eq(profitRules.tenantId, ctx.tenant.id), eq(profitRules.status, "proposed")))
+        .limit(1);
+      if (open) throw new UserError(t("partners.linkDuringVote"));
+    }
     await tx
       .update(partners)
       .set(input)
@@ -476,6 +520,30 @@ export async function proposeRule(
     // The proposer approves their own proposal if they are a partner.
     const mine = active.find((p) => p.membershipId === ctx.membership.id);
     if (mine) await decide(tx, ctx, rule.id, mine.id, "approved");
+    // Tell every other partner with an app login that a rule is waiting for them.
+    const linked = active.filter((p) => p.membershipId && p.membershipId !== ctx.membership.id);
+    if (linked.length > 0) {
+      const users = await tx
+        .select({ userId: memberships.userId })
+        .from(memberships)
+        .where(
+          inArray(
+            memberships.id,
+            linked.flatMap((p) => (p.membershipId ? [p.membershipId] : [])),
+          ),
+        );
+      await notify(
+        tx,
+        ctx.tenant.id,
+        users.map((u) => u.userId),
+        {
+          title: t("rules.notifyTitle"),
+          body: t("rules.notifyBody", { by: ctx.user.name || ctx.user.email }),
+          link: `/${ctx.tenant.slug}/partners/rules/`,
+          email: true,
+        },
+      );
+    }
     await markChanged(tx, ctx.tenant.id, "profitRule", rule.id);
     return rule.id;
   });
@@ -491,7 +559,9 @@ async function decide(
   const [rule] = await tx
     .select()
     .from(profitRules)
-    .where(and(eq(profitRules.id, ruleId), eq(profitRules.tenantId, ctx.tenant.id)));
+    .where(and(eq(profitRules.id, ruleId), eq(profitRules.tenantId, ctx.tenant.id)))
+    // Partners deciding at the same moment must see each other's approval.
+    .for("update");
   if (!rule) throw new UserError(t("rules.notProposed"));
   if (rule.status !== "proposed") throw new UserError(t("rules.notProposed"));
   await tx
@@ -736,7 +806,7 @@ export async function finaliseDistribution(
       entityType: "distribution",
       entityId: id,
     });
-    await markChanged(tx, ctx.tenant.id, "distribution", id);
+    await markChanged(tx, ctx.tenant.id, "distribution", id, "delete");
   });
 }
 
@@ -745,15 +815,28 @@ export async function deleteDraftDistribution(
   ctx: TenantContext,
   id: string,
 ): Promise<void> {
-  await database
-    .delete(distributionRuns)
-    .where(
-      and(
-        eq(distributionRuns.id, id),
-        eq(distributionRuns.tenantId, ctx.tenant.id),
-        eq(distributionRuns.status, "draft"),
-      ),
-    );
+  await database.transaction(async (tx) => {
+    const [row] = await tx
+      .delete(distributionRuns)
+      .where(
+        and(
+          eq(distributionRuns.id, id),
+          eq(distributionRuns.tenantId, ctx.tenant.id),
+          eq(distributionRuns.status, "draft"),
+        ),
+      )
+      .returning({ id: distributionRuns.id });
+    if (!row) return;
+    await audit(tx, {
+      tenantId: ctx.tenant.id,
+      actorUserId: ctx.user.id,
+      action: "distribution.delete",
+      entityType: "distribution",
+      entityId: id,
+      data: {},
+    });
+    await markChanged(tx, ctx.tenant.id, "distribution", id);
+  });
 }
 
 export type StoredResult = {

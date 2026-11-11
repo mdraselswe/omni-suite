@@ -8,8 +8,16 @@ import { formatMoney } from "@/lib/money";
 import { UserError } from "@/server/action";
 import { audit, markChanged } from "@/server/audit";
 import type { Database, DbOrTx } from "@/server/db";
-import { categories, clients, invoicePayments, invoices, recurringInvoices } from "@/server/db/schema";
-import { clientUserIds, nextCounter, notify } from "@/server/shared";
+import {
+  accounts,
+  categories,
+  clients,
+  invoicePayments,
+  invoices,
+  recurringInvoices,
+  timeEntries,
+} from "@/server/db/schema";
+import { clientUserIds, nextCounter, notify, queueMail } from "@/server/shared";
 import type { TenantContext } from "@/server/tenancy/context";
 import { insertTransaction, type Writer } from "@/features/finance";
 
@@ -104,7 +112,10 @@ async function loadInvoice(tx: DbOrTx, tenantId: string, id: string) {
   const [inv] = await tx
     .select()
     .from(invoices)
-    .where(and(eq(invoices.id, id), eq(invoices.tenantId, tenantId)));
+    .where(and(eq(invoices.id, id), eq(invoices.tenantId, tenantId)))
+    // Every caller changes the invoice: lock the row so concurrent payments, sends and
+    // voids run one after another instead of overwriting each other's totals.
+    .for("update");
   if (!inv) throw new UserError(t("invoices.missing"));
   return inv;
 }
@@ -147,29 +158,62 @@ export async function updateInvoice(
   });
 }
 
-export async function sendInvoiceTx(tx: DbOrTx, actor: Actor, id: string): Promise<void> {
+/** How the client heard about a sent document. */
+export type Delivery = "portal" | "email" | "none";
+
+export async function sendInvoiceTx(tx: DbOrTx, actor: Actor, id: string): Promise<Delivery> {
   const inv = await loadInvoice(tx, actor.tenant.id, id);
   if (inv.status !== "draft") throw new UserError(t("invoices.onlyDraft"));
   await tx.update(invoices).set({ status: "sent" }).where(eq(invoices.id, id));
   const total = formatMoney(inv.totalMinor, inv.currency, actor.tenant.settings.locale);
-  await notify(tx, actor.tenant.id, await clientUserIds(tx, actor.tenant.id, inv.clientId), {
-    title: t("invoices.notifyTitle", { number: inv.number, name: actor.tenant.name }),
-    body: t("invoices.notifyBody", { total, due: inv.dueDate }),
-    link: `/${actor.tenant.slug}/portal/invoices/${inv.id}`,
-    email: true,
-  });
+  const business = actor.tenant.settings.branding.displayName || actor.tenant.name;
+  const title = t("invoices.notifyTitle", { number: inv.number, name: business });
+  const portalUsers = await clientUserIds(tx, actor.tenant.id, inv.clientId);
+  let delivery: Delivery = "none";
+  if (portalUsers.length > 0) {
+    await notify(tx, actor.tenant.id, portalUsers, {
+      title,
+      body: t("invoices.notifyBody", { total, due: inv.dueDate }),
+      link: `/${actor.tenant.slug}/portal/invoices/${inv.id}/`,
+      email: true,
+    });
+    delivery = "portal";
+  } else {
+    // No portal login: email the client's contact address with the details instead.
+    const [client] = await tx
+      .select({ name: clients.name, email: clients.email })
+      .from(clients)
+      .where(eq(clients.id, inv.clientId));
+    if (client?.email) {
+      const footer = actor.tenant.settings.invoiceFooter.trim();
+      await queueMail(tx, {
+        to: client.email,
+        subject: title,
+        text: [
+          t("invoices.emailGreeting", { name: client.name }),
+          t("invoices.emailBody", { number: inv.number, total, due: inv.dueDate, business }),
+          footer,
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
+      });
+      delivery = "email";
+    }
+  }
   await audit(tx, {
     tenantId: actor.tenant.id,
     actorUserId: actor.userId,
     action: "invoice.send",
     entityType: "invoice",
     entityId: id,
+    data: { delivery },
   });
   await markChanged(tx, actor.tenant.id, "invoice", id);
+  return delivery;
 }
 
-export async function sendInvoice(database: Database, ctx: TenantContext, id: string): Promise<void> {
-  await database.transaction((tx) => sendInvoiceTx(tx, actorOf(ctx), id));
+export async function sendInvoice(database: Database, ctx: TenantContext, id: string): Promise<Delivery> {
+  return database.transaction((tx) => sendInvoiceTx(tx, actorOf(ctx), id));
 }
 
 export async function voidInvoice(database: Database, ctx: TenantContext, id: string): Promise<void> {
@@ -177,6 +221,11 @@ export async function voidInvoice(database: Database, ctx: TenantContext, id: st
     const inv = await loadInvoice(tx, ctx.tenant.id, id);
     if (inv.paidMinor > 0n) throw new UserError(t("invoices.hasPayments"));
     await tx.update(invoices).set({ status: "void" }).where(eq(invoices.id, id));
+    // Time billed on this invoice can be billed again.
+    await tx
+      .update(timeEntries)
+      .set({ invoiceId: null })
+      .where(and(eq(timeEntries.tenantId, ctx.tenant.id), eq(timeEntries.invoiceId, id)));
     await audit(tx, {
       tenantId: ctx.tenant.id,
       actorUserId: ctx.user.id,
@@ -206,6 +255,7 @@ export async function recordPayment(
   input: PaymentInput,
 ): Promise<void> {
   await database.transaction(async (tx) => {
+    const inv = await loadInvoice(tx, ctx.tenant.id, id);
     if (input.externalRef) {
       const [seen] = await tx
         .select({ id: invoicePayments.id })
@@ -218,7 +268,6 @@ export async function recordPayment(
         );
       if (seen) return;
     }
-    const inv = await loadInvoice(tx, ctx.tenant.id, id);
     if (inv.status === "draft" || inv.status === "void" || inv.status === "paid")
       throw new UserError(t("invoices.notPayable"));
     const balance = inv.totalMinor - inv.paidMinor;
@@ -226,6 +275,13 @@ export async function recordPayment(
       throw new UserError(
         t("invoices.overpay", { balance: formatMoney(balance, inv.currency, ctx.tenant.settings.locale) }),
       );
+    }
+    const [account] = await tx
+      .select({ currency: accounts.currency })
+      .from(accounts)
+      .where(and(eq(accounts.id, input.accountId), eq(accounts.tenantId, ctx.tenant.id)));
+    if (account && account.currency !== inv.currency) {
+      throw new UserError(t("invoices.accountCurrency", { currency: inv.currency }));
     }
     let categoryId = input.categoryId;
     if (!categoryId) {
@@ -288,6 +344,8 @@ export async function listInvoices(
     q?: string;
     today?: string;
     portal?: boolean;
+    /** Rows to return (pages ask for one more to know if there is a next page). */
+    limit?: number;
   } = {},
 ) {
   const overdue = filter.status === "overdue" && filter.today;
@@ -317,7 +375,7 @@ export async function listInvoices(
       ),
     )
     .orderBy(desc(invoices.issueDate), desc(invoices.number))
-    .limit(500);
+    .limit(Math.min(filter.limit ?? 500, 2000));
 }
 
 export async function getInvoice(database: DbOrTx, tenantId: string, id: string) {
@@ -413,10 +471,77 @@ export async function setRecurringActive(
   id: string,
   active: boolean,
 ) {
-  await database
-    .update(recurringInvoices)
-    .set({ active })
-    .where(and(eq(recurringInvoices.id, id), eq(recurringInvoices.tenantId, ctx.tenant.id)));
+  await database.transaction(async (tx) => {
+    const [row] = await tx
+      .update(recurringInvoices)
+      .set({ active })
+      .where(and(eq(recurringInvoices.id, id), eq(recurringInvoices.tenantId, ctx.tenant.id)))
+      .returning({ id: recurringInvoices.id });
+    if (!row) throw new UserError(t("invoices.recurringMissing"));
+    await audit(tx, {
+      tenantId: ctx.tenant.id,
+      actorUserId: ctx.user.id,
+      action: active ? "recurring.resume" : "recurring.pause",
+      entityType: "recurring",
+      entityId: id,
+      data: { active },
+    });
+    await markChanged(tx, ctx.tenant.id, "recurring", id);
+  });
+}
+
+export async function updateRecurring(
+  database: Database,
+  ctx: TenantContext,
+  id: string,
+  input: {
+    clientId: string;
+    name: string;
+    intervalMonths: number;
+    nextRunDate: string;
+    items: LineItem[];
+    autoSend: boolean;
+  },
+): Promise<void> {
+  if (input.items.length === 0) throw new UserError(t("invoices.noItems"));
+  await database.transaction(async (tx) => {
+    await assertClient(tx, ctx.tenant.id, input.clientId);
+    const [row] = await tx
+      .update(recurringInvoices)
+      .set(input)
+      .where(and(eq(recurringInvoices.id, id), eq(recurringInvoices.tenantId, ctx.tenant.id)))
+      .returning({ id: recurringInvoices.id });
+    if (!row) throw new UserError(t("invoices.recurringMissing"));
+    await audit(tx, {
+      tenantId: ctx.tenant.id,
+      actorUserId: ctx.user.id,
+      action: "recurring.update",
+      entityType: "recurring",
+      entityId: id,
+      data: { name: input.name },
+    });
+    await markChanged(tx, ctx.tenant.id, "recurring", id);
+  });
+}
+
+/** Deletes a schedule. Invoices it already created stay. */
+export async function deleteRecurring(database: Database, ctx: TenantContext, id: string): Promise<void> {
+  await database.transaction(async (tx) => {
+    const [row] = await tx
+      .delete(recurringInvoices)
+      .where(and(eq(recurringInvoices.id, id), eq(recurringInvoices.tenantId, ctx.tenant.id)))
+      .returning({ id: recurringInvoices.id, name: recurringInvoices.name });
+    if (!row) throw new UserError(t("invoices.recurringMissing"));
+    await audit(tx, {
+      tenantId: ctx.tenant.id,
+      actorUserId: ctx.user.id,
+      action: "recurring.delete",
+      entityType: "recurring",
+      entityId: id,
+      data: { name: row.name },
+    });
+    await markChanged(tx, ctx.tenant.id, "recurring", id, "delete");
+  });
 }
 
 /** Monthly recurring revenue from active schedules (base currency only). */

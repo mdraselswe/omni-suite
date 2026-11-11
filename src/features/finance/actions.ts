@@ -10,7 +10,9 @@ import {
   closePeriod,
   createAccount,
   createCategory,
+  accountCurrency,
   createTransaction,
+  renameCategory,
   reopenPeriod,
   reverseTransaction,
   setCategoryArchived,
@@ -26,6 +28,9 @@ export async function createTransactionAction(
   return runAction(async () => {
     const { ctx } = await actionContext(slug, "finance.write");
     const raw = formObject(formData);
+    // Amounts are in the account's currency (its own number of decimals), not the base currency.
+    const currency =
+      (await accountCurrency(db(), ctx.tenant.id, raw.accountId ?? "")) ?? ctx.tenant.settings.currency;
     const input = z
       .object({
         kind: z.enum(TX_KINDS as [string, ...string[]]),
@@ -36,7 +41,7 @@ export async function createTransactionAction(
         clientId: fields.optionalId(),
         date: fields.date(),
         description: fields.text(300),
-        amount: fields.money(ctx.tenant.settings.currency, { positive: true }),
+        amount: fields.money(currency, { positive: true }),
         fxRate: z
           .string()
           .regex(/^\d+(\.\d{1,8})?$/)
@@ -139,6 +144,18 @@ export async function toggleCategoryAction(
       .object({ id: fields.id(), archived: z.enum(["true", "false"]) })
       .parse(formObject(formData));
     await setCategoryArchived(db(), ctx, input.id, input.archived === "true");
+  });
+}
+
+export async function renameCategoryAction(
+  slug: string,
+  _p: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  return runAction(async () => {
+    const { ctx } = await actionContext(slug, "finance.write");
+    const input = z.object({ id: fields.id(), name: fields.required(80) }).parse(formObject(formData));
+    await renameCategory(db(), ctx, input.id, input.name);
   });
 }
 

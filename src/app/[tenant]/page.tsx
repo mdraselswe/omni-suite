@@ -88,7 +88,9 @@ export default async function DashboardPage({ params, searchParams }: PageProps<
       when(canFinance, () => monthlyTotals(database, ctx.tenant.id, runwayFrom, runwayTo)),
       when(canInvoices, () => receivables(database, ctx.tenant.id, now)),
       when(canInvoices, () => monthlyRecurring(database, ctx)),
-      when(canInvoices, () => listInvoices(database, ctx.tenant.id, { status: "overdue", today: now })),
+      when(canInvoices, () =>
+        listInvoices(database, ctx.tenant.id, { status: "overdue", today: now, limit: 6 }),
+      ),
       when(canPipeline, () => pipelineSummary(database, ctx)),
       when(hasTasks, () => myDueTasks(database, ctx, addDays(now, 7))),
       when(canDash && projectScope !== undefined, () => listProjects(database, ctx, projectScope ?? "own")),

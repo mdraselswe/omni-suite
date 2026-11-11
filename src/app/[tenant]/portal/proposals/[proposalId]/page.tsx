@@ -6,6 +6,7 @@ import { ActionForm, SubmitButton } from "@/components/form/action-form";
 import { TextField } from "@/components/form/field";
 import { Section } from "@/components/layout/page";
 import { ButtonLink } from "@/components/ui/button-link";
+import { PrintButton } from "@/features/invoices";
 import { getProposal, respondProposalAction } from "@/features/proposals";
 import { t } from "@/i18n";
 import { formatDateTime, today } from "@/lib/dates";
@@ -37,10 +38,13 @@ export default async function PortalProposal({
         href={tenantHref(tenant, "portal/proposals")}
         variant="ghost"
         size="sm"
-        className="-ml-2 justify-self-start"
+        className="-ml-2 justify-self-start print:hidden"
       >
         {t("portal.backToList")}
       </ButtonLink>
+      <div className="justify-self-end print:hidden">
+        <PrintButton />
+      </div>
 
       <article className="grid gap-6 surface p-4 sm:p-8">
         <header className="flex flex-wrap items-start justify-between gap-4">

@@ -1,4 +1,15 @@
-import { boolean, index, integer, jsonb, numeric, pgTable, text, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import {
+  boolean,
+  index,
+  integer,
+  jsonb,
+  numeric,
+  pgTable,
+  text,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
 import { createdAt, day, money, pk, ts } from "./columns";
 import { user } from "./auth";
 import { tenants } from "./core";
@@ -76,6 +87,12 @@ export const transactions = pgTable(
     index("transactions_tenant_date_idx").on(t.tenantId, t.date),
     index("transactions_tenant_account_idx").on(t.tenantId, t.accountId),
     index("transactions_tenant_kind_date_idx").on(t.tenantId, t.kind, t.date),
+    index("transactions_tenant_to_account_idx").on(t.tenantId, t.toAccountId),
+    index("transactions_tenant_partner_idx").on(t.tenantId, t.partnerId),
+    // A row can be reversed once.
+    uniqueIndex("transactions_reverses_uq")
+      .on(t.reversesId)
+      .where(sql`${t.reversesId} is not null`),
   ],
 );
 
@@ -191,7 +208,7 @@ export const profitRuleApprovals = pgTable(
     decidedBy: text("decided_by").references(() => user.id, { onDelete: "set null" }),
     createdAt: createdAt(),
   },
-  (t) => [index("profit_rule_approvals_rule_idx").on(t.ruleId)],
+  (t) => [uniqueIndex("profit_rule_approvals_rule_partner_uq").on(t.ruleId, t.partnerId)],
 );
 
 export const distributionRuns = pgTable(

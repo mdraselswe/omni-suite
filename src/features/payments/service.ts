@@ -4,12 +4,12 @@ import { recordPayment } from "@/features/invoices";
 import { t } from "@/i18n";
 import { today } from "@/lib/dates";
 import { minorDigits } from "@/lib/money";
-import { parseTenantSettings } from "@/lib/tenant-settings";
 import { UserError } from "@/server/action";
 import { audit } from "@/server/audit";
 import { decrypt, encrypt } from "@/server/crypto";
 import type { Database, DbOrTx } from "@/server/db";
-import { accounts, clients, invoices, stripeConnections, tenants } from "@/server/db/schema";
+import { accounts, clients, invoicePayments, invoices, stripeConnections, tenants } from "@/server/db/schema";
+import { notify, usersWithPermission } from "@/server/shared";
 import {
   keyMode,
   str,
@@ -19,6 +19,7 @@ import {
   verifyWebhook,
 } from "@/server/stripe";
 import type { TenantContext } from "@/server/tenancy/context";
+import { tenantFromRow } from "@/server/tenancy/service";
 
 /* ─── Connection (Settings → Online payments) ─────────────────────── */
 
@@ -74,7 +75,7 @@ export async function saveStripeConnection(
   if (!mode) throw new UserError(t("payments.badKey"));
   if (!/^whsec_[A-Za-z0-9]{10,}$/.test(webhookSecret)) throw new UserError(t("payments.badWebhookSecret"));
   const [account] = await database
-    .select({ id: accounts.id })
+    .select({ id: accounts.id, currency: accounts.currency })
     .from(accounts)
     .where(
       and(
@@ -84,6 +85,10 @@ export async function saveStripeConnection(
       ),
     );
   if (!account) throw new UserError(t("finance.accountMissing"));
+  // Invoices are in the base currency, so online payments must land in a base-currency account.
+  if (account.currency !== ctx.tenant.settings.currency) {
+    throw new UserError(t("invoices.accountCurrency", { currency: ctx.tenant.settings.currency }));
+  }
   if (input.secretKey.trim()) await check(secretKey);
 
   const values = {
@@ -232,6 +237,13 @@ export async function handleTenantWebhook(
   if (str(session, "payment_status") !== "paid" || str(metadata, "tenantId") !== tenantId) {
     return { status: 200, note: "not paid" };
   }
+  const externalRef = str(session, "id") || event.id;
+  // Stripe redelivers events: once recorded, a repeat is not an "unapplied" payment.
+  const [seen] = await database
+    .select({ id: invoicePayments.id })
+    .from(invoicePayments)
+    .where(and(eq(invoicePayments.tenantId, tenantId), eq(invoicePayments.externalRef, externalRef)));
+  if (seen) return { status: 200, note: "already recorded" };
   const invoiceId = str(metadata, "invoiceId");
   const amount = typeof session.amount_total === "number" ? BigInt(session.amount_total) : 0n;
   const [tenantRow] = await database.select().from(tenants).where(eq(tenants.id, tenantId));
@@ -243,14 +255,7 @@ export async function handleTenantWebhook(
   if (str(session, "currency").toUpperCase() !== inv.currency)
     return { status: 200, note: "currency mismatch" };
 
-  const tenant = {
-    id: tenantRow.id,
-    slug: tenantRow.slug,
-    name: tenantRow.name,
-    status: tenantRow.status,
-    plan: tenantRow.plan,
-    settings: parseTenantSettings(tenantRow.settings),
-  };
+  const tenant = tenantFromRow(tenantRow);
   const balance = inv.totalMinor - inv.paidMinor;
   // Paid by hand in the meantime: record what is still owed; the rest is logged for a refund.
   const applied = amount > balance ? balance : amount;
@@ -263,7 +268,12 @@ export async function handleTenantWebhook(
         accountId: conn.accountId,
         method: "stripe",
         categoryId: null,
-        externalRef: str(session, "id") || event.id,
+        externalRef,
+      });
+      await notify(database, tenantId, await usersWithPermission(database, tenantId, "invoices.read"), {
+        title: t("payments.receivedTitle", { number: inv.number }),
+        body: t("payments.receivedBody", { number: inv.number }),
+        link: `/${tenant.slug}/invoices/${inv.id}/`,
       });
     } catch (error) {
       // Voided invoice or closed period: retrying won't help, so log it for a person to sort out.

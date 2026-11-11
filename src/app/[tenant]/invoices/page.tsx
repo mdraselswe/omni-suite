@@ -15,6 +15,7 @@ import { clientOptions } from "@/server/options";
 import { hasPermission } from "@/server/tenancy/context";
 
 const STATUSES = ["draft", "sent", "partially_paid", "overdue", "paid", "void"] as const;
+const PAGE = 100;
 
 export default async function InvoicesPage({ params, searchParams }: PageProps<"/[tenant]/invoices">) {
   const { tenant } = await params;
@@ -27,12 +28,18 @@ export default async function InvoicesPage({ params, searchParams }: PageProps<"
   const clientParam = param(sp, "client");
   const clientId = /^[0-9a-f-]{36}$/.test(clientParam) ? clientParam : undefined;
   const q = param(sp, "q") || undefined;
+  const limit = Math.min(Number(param(sp, "limit")) || PAGE, 2000);
   const database = db();
-  const [rows, owed, clients] = await Promise.all([
-    listInvoices(database, ctx.tenant.id, { status, clientId, q, today: now }),
+  const [found, owed, clients] = await Promise.all([
+    listInvoices(database, ctx.tenant.id, { status, clientId, q, today: now, limit: limit + 1 }),
     receivables(database, ctx.tenant.id, now),
     clientOptions(database, ctx.tenant.id),
   ]);
+  const hasMore = found.length > limit;
+  const rows = found.slice(0, limit);
+  const next = new URLSearchParams();
+  for (const [k, v] of Object.entries({ status, client: clientId, q })) if (v) next.set(k, v);
+  next.set("limit", String(limit + PAGE));
   const drafts = rows.filter((r) => r.invoice.status === "draft").length;
 
   return (
@@ -117,6 +124,15 @@ export default async function InvoicesPage({ params, searchParams }: PageProps<"
             </TableBody>
           </Table>
         )}
+        {hasMore ? (
+          <ButtonLink
+            href={tenantHref(tenant, `invoices?${next.toString()}`)}
+            variant="outline"
+            className="justify-self-center"
+          >
+            {t("finance.loadMore")}
+          </ButtonLink>
+        ) : null}
       </Section>
     </div>
   );

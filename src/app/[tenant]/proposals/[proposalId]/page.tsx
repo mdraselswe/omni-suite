@@ -4,11 +4,16 @@ import { formatters } from "@/components/data/format";
 import { StatusBadge } from "@/components/data/status-badge";
 import { ActionButton } from "@/components/form/action-button";
 import { FormDialog } from "@/components/form/form-dialog";
-import { DocumentLines } from "@/features/invoices";
+import { ButtonLink } from "@/components/ui/button-link";
+import { canUseAi } from "@/features/ai";
+import { DocumentLines, PrintButton } from "@/features/invoices";
 import {
+  deleteProposalAction,
   getProposal,
+  invoiceForProposal,
   ProposalFields,
   proposalToInvoiceAction,
+  reopenProposalAction,
   sendProposalAction,
   updateProposalAction,
 } from "@/features/proposals";
@@ -30,7 +35,10 @@ export default async function ProposalPage({ params }: PageProps<"/[tenant]/prop
   const f = formatters(ctx);
   const settings = ctx.tenant.settings;
   const canWrite = hasPermission(ctx, "proposals.write");
-  const clients = canWrite && p.status === "draft" ? await clientOptions(database, ctx.tenant.id) : [];
+  const [clients, invoiced] = await Promise.all([
+    canWrite && p.status === "draft" ? clientOptions(database, ctx.tenant.id) : Promise.resolve([]),
+    p.status === "accepted" ? invoiceForProposal(database, ctx.tenant.id, p.id) : Promise.resolve(null),
+  ]);
 
   return (
     <div className="mx-auto grid max-w-4xl gap-6">
@@ -38,7 +46,7 @@ export default async function ProposalPage({ params }: PageProps<"/[tenant]/prop
         <div className="grid gap-1">
           <Link
             href={tenantHref(tenant, "proposals")}
-            className="text-sm text-muted-foreground hover:underline"
+            className="text-sm text-muted-foreground hover:underline print:hidden"
           >
             ← {t("proposals.title")}
           </Link>
@@ -47,7 +55,30 @@ export default async function ProposalPage({ params }: PageProps<"/[tenant]/prop
             <StatusBadge status={p.status} label={t(`proposals.status.${p.status}`)} />
           </div>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 print:hidden">
+          <PrintButton />
+          {canWrite && p.status === "draft" ? (
+            <ActionButton
+              action={deleteProposalAction.bind(null, tenant)}
+              values={{ id: p.id }}
+              variant="outline"
+              size="default"
+              confirm={t("proposals.deleteConfirm")}
+            >
+              {t("form.delete")}
+            </ActionButton>
+          ) : null}
+          {canWrite && (p.status === "sent" || p.status === "declined") ? (
+            <ActionButton
+              action={reopenProposalAction.bind(null, tenant)}
+              values={{ id: p.id }}
+              variant="outline"
+              size="default"
+              confirm={t("proposals.reopenConfirm")}
+            >
+              {t("proposals.reopen")}
+            </ActionButton>
+          ) : null}
           {canWrite && p.status === "draft" ? (
             <>
               <FormDialog
@@ -61,6 +92,7 @@ export default async function ProposalPage({ params }: PageProps<"/[tenant]/prop
                 <ProposalFields
                   clients={clients}
                   settings={settings}
+                  aiTenant={canUseAi(ctx) ? tenant : undefined}
                   proposal={{
                     id: p.id,
                     clientId: p.clientId,
@@ -83,7 +115,11 @@ export default async function ProposalPage({ params }: PageProps<"/[tenant]/prop
               </ActionButton>
             </>
           ) : null}
-          {p.status === "accepted" && hasPermission(ctx, "invoices.write") ? (
+          {invoiced ? (
+            <ButtonLink href={tenantHref(tenant, `invoices/${invoiced.id}`)} variant="outline">
+              {t("proposals.invoicedAs", { number: invoiced.number })}
+            </ButtonLink>
+          ) : p.status === "accepted" && hasPermission(ctx, "invoices.write") ? (
             <ActionButton
               action={proposalToInvoiceAction.bind(null, tenant)}
               values={{ id: p.id }}

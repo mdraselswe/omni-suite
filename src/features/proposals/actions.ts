@@ -3,14 +3,18 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { t } from "@/i18n";
 import { today } from "@/lib/dates";
+import { tenantHref } from "@/lib/href";
 import { fields, formObject, runAction, type ActionState } from "@/server/action";
 import { actionContext } from "@/server/auth/session";
 import { db } from "@/server/db";
 import { parseItemsField } from "@/server/form-items";
 import {
   createProposal,
+  deleteProposal,
   invoiceFromProposal,
+  reopenProposal,
   respondToProposal,
   sendProposal,
   updateProposal,
@@ -67,8 +71,39 @@ export async function sendProposalAction(
 ): Promise<ActionState> {
   return runAction(async () => {
     const { ctx } = await actionContext(slug, "proposals.write");
-    await sendProposal(db(), ctx, fields.id().parse(formObject(formData).id));
+    const delivery = await sendProposal(db(), ctx, fields.id().parse(formObject(formData).id));
+    return t(
+      delivery === "portal"
+        ? "proposals.sentPortal"
+        : delivery === "email"
+          ? "proposals.sentEmail"
+          : "proposals.sentNobody",
+    );
   });
+}
+
+export async function reopenProposalAction(
+  slug: string,
+  _p: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  return runAction(async () => {
+    const { ctx } = await actionContext(slug, "proposals.write");
+    await reopenProposal(db(), ctx, fields.id().parse(formObject(formData).id));
+  });
+}
+
+export async function deleteProposalAction(
+  slug: string,
+  _p: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const state = await runAction(async () => {
+    const { ctx } = await actionContext(slug, "proposals.write");
+    await deleteProposal(db(), ctx, fields.id().parse(formObject(formData).id));
+  });
+  if (state?.ok) redirect(tenantHref(slug, "proposals"));
+  return state;
 }
 
 export async function proposalToInvoiceAction(

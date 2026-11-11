@@ -14,6 +14,7 @@ import {
   listPeriods,
   reopenPeriodAction,
   toggleAccountAction,
+  renameCategoryAction,
   toggleCategoryAction,
 } from "@/features/finance";
 import { t } from "@/i18n";
@@ -86,7 +87,24 @@ export default async function FinanceSetupPage({ params }: PageProps<"/[tenant]/
                   {f.money(a.balanceMinor, a.currency)}
                 </TableCell>
                 {canWrite ? (
-                  <TableCell>
+                  <TableCell className="flex justify-end gap-1">
+                    <FormDialog
+                      trigger={t("finance.rename")}
+                      title={t("finance.rename")}
+                      action={toggleAccountAction.bind(null, tenant)}
+                      variant="ghost"
+                      icon={false}
+                    >
+                      <input type="hidden" name="id" value={a.id} />
+                      <input type="hidden" name="archived" value={String(a.archived)} />
+                      <TextField
+                        name="name"
+                        label={t("form.name")}
+                        defaultValue={a.name}
+                        required
+                        maxLength={80}
+                      />
+                    </FormDialog>
                     <ActionButton
                       action={toggleAccountAction.bind(null, tenant)}
                       values={{ id: a.id, name: a.name, archived: String(!a.archived) }}
@@ -129,6 +147,25 @@ export default async function FinanceSetupPage({ params }: PageProps<"/[tenant]/
             <li key={c.id} className="flex items-center gap-1 rounded-md border py-1 pr-1 pl-2.5 text-sm">
               <span className={c.archived ? "text-muted-foreground line-through" : undefined}>{c.name}</span>
               <Badge variant="outline">{t(`finance.kind.${c.kind}`)}</Badge>
+              {canWrite ? (
+                <FormDialog
+                  trigger={t("finance.rename")}
+                  title={t("finance.rename")}
+                  action={renameCategoryAction.bind(null, tenant)}
+                  variant="ghost"
+                  size="xs"
+                  icon={false}
+                >
+                  <input type="hidden" name="id" value={c.id} />
+                  <TextField
+                    name="name"
+                    label={t("form.name")}
+                    defaultValue={c.name}
+                    required
+                    maxLength={80}
+                  />
+                </FormDialog>
+              ) : null}
               {canWrite ? (
                 <ActionButton
                   action={toggleCategoryAction.bind(null, tenant)}

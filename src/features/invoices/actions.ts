@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { t } from "@/i18n";
 import { addDays } from "@/lib/dates";
 import { customValues, fields, formObject, runAction, type ActionState } from "@/server/action";
 import { actionContext } from "@/server/auth/session";
@@ -11,10 +12,12 @@ import { customFieldsFor } from "@/server/shared";
 import {
   createInvoice,
   createRecurring,
+  deleteRecurring,
   recordPayment,
   sendInvoice,
   setRecurringActive,
   updateInvoice,
+  updateRecurring,
   voidInvoice,
 } from "./service";
 
@@ -75,7 +78,14 @@ export async function sendInvoiceAction(
 ): Promise<ActionState> {
   return runAction(async () => {
     const { ctx } = await actionContext(slug, "invoices.write");
-    await sendInvoice(db(), ctx, fields.id().parse(formObject(formData).id));
+    const delivery = await sendInvoice(db(), ctx, fields.id().parse(formObject(formData).id));
+    return t(
+      delivery === "portal"
+        ? "invoices.sentPortal"
+        : delivery === "email"
+          ? "invoices.sentEmail"
+          : "invoices.sentNobody",
+    );
   });
 }
 
@@ -117,6 +127,14 @@ export async function recordPaymentAction(
   });
 }
 
+const scheduleSchema = z.object({
+  clientId: fields.id(),
+  name: fields.required(120),
+  intervalMonths: fields.int(1, 36),
+  nextRunDate: fields.date(),
+  autoSend: fields.checkbox(),
+});
+
 export async function createRecurringAction(
   slug: string,
   _p: ActionState,
@@ -125,19 +143,38 @@ export async function createRecurringAction(
   return runAction(async () => {
     const { ctx } = await actionContext(slug, "invoices.write");
     const raw = formObject(formData);
-    const input = z
-      .object({
-        clientId: fields.id(),
-        name: fields.required(120),
-        intervalMonths: fields.int(1, 36),
-        nextRunDate: fields.date(),
-        autoSend: fields.checkbox(),
-      })
-      .parse(raw);
+    const input = scheduleSchema.parse(raw);
     await createRecurring(db(), ctx, {
       ...input,
       items: parseItemsField(raw.items, ctx.tenant.settings.currency),
     });
+  });
+}
+
+export async function updateRecurringAction(
+  slug: string,
+  _p: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  return runAction(async () => {
+    const { ctx } = await actionContext(slug, "invoices.write");
+    const raw = formObject(formData);
+    const { id, ...input } = scheduleSchema.extend({ id: fields.id() }).parse(raw);
+    await updateRecurring(db(), ctx, id, {
+      ...input,
+      items: parseItemsField(raw.items, ctx.tenant.settings.currency),
+    });
+  });
+}
+
+export async function deleteRecurringAction(
+  slug: string,
+  _p: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  return runAction(async () => {
+    const { ctx } = await actionContext(slug, "invoices.write");
+    await deleteRecurring(db(), ctx, fields.id().parse(formObject(formData).id));
   });
 }
 

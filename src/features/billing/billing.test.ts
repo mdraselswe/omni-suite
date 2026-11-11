@@ -37,7 +37,7 @@ beforeAll(async () => {
 
 describe("subscription billing", () => {
   it("limits team seats to the first plan until the business subscribes", async () => {
-    const { createInvitation, listRoles } = await import("@/features/team/service");
+    const { createInvitation, listRoles } = await import("@/features/team");
     const staff = (await listRoles(database, ctx.tenant.id)).find((r) => r.key === "staff")?.id ?? "";
     const invite = (email: string) =>
       createInvitation(database, ctx, { email, kind: "internal", clientId: null, roleIds: [staff] });

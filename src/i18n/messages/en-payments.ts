@@ -1,5 +1,7 @@
 /** UI text for Phase 7: online payments (Stripe), subscription billing, shared integration labels. */
 export const enPayments = {
+  "payments.receivedTitle": "Online payment received for {number}",
+  "payments.receivedBody": "A client paid invoice {number} by card. It has been recorded.",
   "module.ai": "AI assistant",
   "perm.billing.manage": "Manage the OmniSuite subscription",
   "perm.payments.online": "Set up online card payments",

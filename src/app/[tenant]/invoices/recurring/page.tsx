@@ -9,14 +9,17 @@ import { EmptyState, Section, StatCard } from "@/components/layout/page";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   createRecurringAction,
+  deleteRecurringAction,
   listRecurring,
   monthlyRecurring,
   toggleRecurringAction,
+  updateRecurringAction,
 } from "@/features/invoices";
 import { t } from "@/i18n";
 import { addDays, today } from "@/lib/dates";
 import { tenantHref } from "@/lib/href";
-import { computeTotals } from "@/lib/line-items";
+import { computeTotals, type LineItem } from "@/lib/line-items";
+import type { TenantSettings } from "@/lib/tenant-settings";
 import { requireTenantPermission } from "@/server/auth/session";
 import { db } from "@/server/db";
 import { clientOptions } from "@/server/options";
@@ -54,40 +57,7 @@ export default async function RecurringInvoicesPage({ params }: PageProps<"/[ten
               action={createRecurringAction.bind(null, tenant)}
               wide
             >
-              <SelectField
-                name="clientId"
-                label={t("team.client")}
-                options={clients}
-                placeholder={t("form.choose")}
-                required
-              />
-              <TextField name="name" label={t("invoices.scheduleName")} required />
-              <div className="grid gap-4 sm:grid-cols-2">
-                <TextField
-                  name="intervalMonths"
-                  label={t("invoices.interval")}
-                  type="number"
-                  min={1}
-                  max={36}
-                  defaultValue="1"
-                  required
-                />
-                <TextField
-                  name="nextRunDate"
-                  label={t("invoices.nextRun")}
-                  type="date"
-                  defaultValue={addDays(today(settings.timezone), 1)}
-                  required
-                />
-              </div>
-              <LineItemsEditor
-                currency={settings.currency}
-                locale={settings.locale}
-                defaultTaxBp={settings.tax.rateBp}
-                pricesIncludeTax={settings.tax.pricesIncludeTax}
-                taxName={settings.tax.name}
-              />
-              <CheckboxField name="autoSend" label={t("invoices.autoSend")} />
+              <ScheduleFields clients={clients} settings={settings} />
             </FormDialog>
           ) : null
         }
@@ -138,13 +108,34 @@ export default async function RecurringInvoicesPage({ params }: PageProps<"/[ten
                     <TableCell className="text-right tabular-nums">{f.money(total, r.currency)}</TableCell>
                     {canWrite ? (
                       <TableCell>
-                        <ActionButton
-                          action={toggleRecurringAction.bind(null, tenant)}
-                          values={{ id: r.id, active: r.active ? "false" : "true" }}
-                          variant="ghost"
-                        >
-                          {r.active ? t("invoices.pause") : t("invoices.resume")}
-                        </ActionButton>
+                        <div className="flex justify-end gap-1">
+                          <FormDialog
+                            trigger={t("form.edit")}
+                            title={r.name}
+                            action={updateRecurringAction.bind(null, tenant)}
+                            variant="ghost"
+                            icon={false}
+                            wide
+                          >
+                            <input type="hidden" name="id" value={r.id} />
+                            <ScheduleFields clients={clients} settings={settings} schedule={r} />
+                          </FormDialog>
+                          <ActionButton
+                            action={toggleRecurringAction.bind(null, tenant)}
+                            values={{ id: r.id, active: r.active ? "false" : "true" }}
+                            variant="ghost"
+                          >
+                            {r.active ? t("invoices.pause") : t("invoices.resume")}
+                          </ActionButton>
+                          <ActionButton
+                            action={deleteRecurringAction.bind(null, tenant)}
+                            values={{ id: r.id }}
+                            confirm={t("invoices.recurringDeleteConfirm")}
+                            variant="ghost"
+                          >
+                            {t("form.delete")}
+                          </ActionButton>
+                        </div>
                       </TableCell>
                     ) : null}
                   </TableRow>
@@ -155,5 +146,64 @@ export default async function RecurringInvoicesPage({ params }: PageProps<"/[ten
         )}
       </Section>
     </div>
+  );
+}
+
+/** Fields of a recurring schedule, empty for a new one or filled from `schedule`. */
+function ScheduleFields({
+  clients,
+  settings,
+  schedule,
+}: {
+  clients: { value: string; label: string }[];
+  settings: TenantSettings;
+  schedule?: {
+    clientId: string;
+    name: string;
+    intervalMonths: number;
+    nextRunDate: string;
+    items: LineItem[];
+    autoSend: boolean;
+  };
+}) {
+  return (
+    <>
+      <SelectField
+        name="clientId"
+        label={t("team.client")}
+        options={clients}
+        placeholder={t("form.choose")}
+        defaultValue={schedule?.clientId}
+        required
+      />
+      <TextField name="name" label={t("invoices.scheduleName")} defaultValue={schedule?.name} required />
+      <div className="grid gap-4 sm:grid-cols-2">
+        <TextField
+          name="intervalMonths"
+          label={t("invoices.interval")}
+          type="number"
+          min={1}
+          max={36}
+          defaultValue={String(schedule?.intervalMonths ?? 1)}
+          required
+        />
+        <TextField
+          name="nextRunDate"
+          label={t("invoices.nextRun")}
+          type="date"
+          defaultValue={schedule?.nextRunDate ?? addDays(today(settings.timezone), 1)}
+          required
+        />
+      </div>
+      <LineItemsEditor
+        initial={schedule?.items}
+        currency={settings.currency}
+        locale={settings.locale}
+        defaultTaxBp={settings.tax.rateBp}
+        pricesIncludeTax={settings.tax.pricesIncludeTax}
+        taxName={settings.tax.name}
+      />
+      <CheckboxField name="autoSend" label={t("invoices.autoSend")} defaultChecked={schedule?.autoSend} />
+    </>
   );
 }

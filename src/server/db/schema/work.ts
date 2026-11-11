@@ -50,6 +50,8 @@ export const leads = pgTable(
     clientId: uuid("client_id").references(() => clients.id, { onDelete: "set null" }),
     ownerMembershipId: uuid("owner_membership_id").references(() => memberships.id, { onDelete: "set null" }),
     custom: custom(),
+    /** Archived leads (spam, duplicates, dead) leave the board but stay in the record. */
+    archivedAt: ts("archived_at"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -177,6 +179,8 @@ export const invoicePayments = pgTable(
     method: text("method").notNull().default(""),
     /** Provider reference (e.g. Stripe Checkout Session id) so a webhook never records twice. */
     externalRef: text("external_ref"),
+    /** Set when the payment's ledger row was reversed (the amount no longer counts as paid). */
+    reversedAt: ts("reversed_at"),
     createdAt: createdAt(),
   },
   (t) => [
@@ -306,6 +310,8 @@ export const timeEntries = pgTable(
     note: text("note").notNull().default(""),
     billable: boolean("billable").notNull().default(true),
     hourlyRateMinor: money("hourly_rate_minor"),
+    /** The invoice this billable time was billed on (null = not billed yet). */
+    invoiceId: uuid("invoice_id").references(() => invoices.id, { onDelete: "set null" }),
     createdAt: createdAt(),
   },
   (t) => [

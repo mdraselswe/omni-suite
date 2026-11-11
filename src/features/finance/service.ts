@@ -1,10 +1,20 @@
 import "server-only";
-import { and, asc, desc, eq, gte, ilike, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ilike, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import { t } from "@/i18n";
 import { UserError } from "@/server/action";
 import { audit, markChanged } from "@/server/audit";
 import type { Database, DbOrTx } from "@/server/db";
-import { accounts, categories, periods, transactions } from "@/server/db/schema";
+import {
+  accounts,
+  capitalContributions,
+  categories,
+  clients,
+  invoicePayments,
+  invoices,
+  partners,
+  periods,
+  transactions,
+} from "@/server/db/schema";
 import type { TenantContext } from "@/server/tenancy/context";
 
 export type TxKind = (typeof transactions.$inferSelect)["kind"];
@@ -141,10 +151,62 @@ export async function setCategoryArchived(
   id: string,
   archived: boolean,
 ): Promise<void> {
-  await database
-    .update(categories)
-    .set({ archived })
-    .where(and(eq(categories.id, id), eq(categories.tenantId, ctx.tenant.id)));
+  await database.transaction(async (tx) => {
+    const [row] = await tx
+      .update(categories)
+      .set({ archived })
+      .where(and(eq(categories.id, id), eq(categories.tenantId, ctx.tenant.id)))
+      .returning({ id: categories.id });
+    if (!row) throw new UserError(t("finance.categoryMissing"));
+    await audit(tx, {
+      tenantId: ctx.tenant.id,
+      actorUserId: ctx.user.id,
+      action: archived ? "category.archive" : "category.restore",
+      entityType: "category",
+      entityId: id,
+      data: { archived },
+    });
+    await markChanged(tx, ctx.tenant.id, "category", id);
+  });
+}
+
+export async function renameCategory(
+  database: Database,
+  ctx: TenantContext,
+  id: string,
+  name: string,
+): Promise<void> {
+  await database.transaction(async (tx) => {
+    const [row] = await tx
+      .update(categories)
+      .set({ name })
+      .where(and(eq(categories.id, id), eq(categories.tenantId, ctx.tenant.id)))
+      .returning({ id: categories.id });
+    if (!row) throw new UserError(t("finance.categoryMissing"));
+    await audit(tx, {
+      tenantId: ctx.tenant.id,
+      actorUserId: ctx.user.id,
+      action: "category.rename",
+      entityType: "category",
+      entityId: id,
+      data: { name },
+    });
+    await markChanged(tx, ctx.tenant.id, "category", id);
+  });
+}
+
+/** The currency of one of the tenant's accounts (null if it isn't theirs). */
+export async function accountCurrency(
+  database: DbOrTx,
+  tenantId: string,
+  id: string,
+): Promise<string | null> {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
+  const [row] = await database
+    .select({ currency: accounts.currency })
+    .from(accounts)
+    .where(and(eq(accounts.id, id), eq(accounts.tenantId, tenantId)));
+  return row?.currency ?? null;
 }
 
 /* ─── Periods ──────────────────────────────────────────────────── */
@@ -261,7 +323,25 @@ export async function insertTransaction(tx: DbOrTx, ctx: Writer, input: NewTrans
       .where(and(eq(categories.id, input.categoryId), eq(categories.tenantId, ctx.tenant.id)));
     if (!cat || cat.kind !== input.kind) throw new UserError(t("finance.categoryKind"));
   }
+  if (input.partnerId) {
+    const [p] = await tx
+      .select({ id: partners.id })
+      .from(partners)
+      .where(and(eq(partners.id, input.partnerId), eq(partners.tenantId, ctx.tenant.id)));
+    if (!p) throw new UserError(t("finance.partnerMissing"));
+  }
+  if (input.clientId) {
+    const [c] = await tx
+      .select({ id: clients.id })
+      .from(clients)
+      .where(and(eq(clients.id, input.clientId), eq(clients.tenantId, ctx.tenant.id)));
+    if (!c) throw new UserError(t("finance.clientMissing"));
+  }
   const base = ctx.tenant.settings.currency;
+  // A foreign-currency amount needs its own rate; counting it 1:1 would skew reports and profit shares.
+  if (account.currency !== base && !(input.fxRate && Number(input.fxRate) > 0)) {
+    throw new UserError(t("finance.fxRequired"));
+  }
   const fxRate = account.currency === base ? "1" : (input.fxRate ?? "1");
   const baseAmountMinor = convert(input.amountMinor, fxRate);
   const [row] = await tx
@@ -326,7 +406,9 @@ export async function reverseTransactionTx(
   const [orig] = await tx
     .select()
     .from(transactions)
-    .where(and(eq(transactions.id, id), eq(transactions.tenantId, ctx.tenant.id)));
+    .where(and(eq(transactions.id, id), eq(transactions.tenantId, ctx.tenant.id)))
+    // Two people reversing at once must not negate the row twice.
+    .for("update");
   if (!orig) throw new UserError(t("finance.txMissing"));
   if (orig.reversesId || orig.reversedAt) throw new UserError(t("finance.alreadyReversed"));
   await assertOpenDate(tx, ctx.tenant.id, date);
@@ -345,6 +427,7 @@ export async function reverseTransactionTx(
     .returning({ id: transactions.id });
   if (!row) throw new Error("Reversal insert failed");
   await tx.update(transactions).set({ reversedAt: new Date() }).where(eq(transactions.id, orig.id));
+  await undoLinkedRecords(tx, ctx, orig, row.id, date);
   await audit(tx, {
     tenantId: ctx.tenant.id,
     actorUserId: ctx.user.id,
@@ -356,6 +439,87 @@ export async function reverseTransactionTx(
   await markChanged(tx, ctx.tenant.id, "transaction", orig.id);
   await markChanged(tx, ctx.tenant.id, "transaction", row.id);
   return row.id;
+}
+
+/**
+ * Keeps the records a ledger row came from in step with its reversal: an invoice
+ * payment stops counting as paid, and a capital contribution gets an opposite entry.
+ */
+async function undoLinkedRecords(
+  tx: DbOrTx,
+  ctx: TenantContext,
+  orig: typeof transactions.$inferSelect,
+  reversalId: string,
+  date: string,
+): Promise<void> {
+  if (orig.invoiceId) {
+    const [payment] = await tx
+      .select()
+      .from(invoicePayments)
+      .where(
+        and(
+          eq(invoicePayments.tenantId, ctx.tenant.id),
+          eq(invoicePayments.transactionId, orig.id),
+          isNull(invoicePayments.reversedAt),
+        ),
+      );
+    const [inv] = payment
+      ? await tx
+          .select()
+          .from(invoices)
+          .where(and(eq(invoices.id, payment.invoiceId), eq(invoices.tenantId, ctx.tenant.id)))
+          .for("update")
+      : [];
+    if (payment && inv) {
+      await tx
+        .update(invoicePayments)
+        .set({ reversedAt: new Date() })
+        .where(eq(invoicePayments.id, payment.id));
+      const paid = inv.paidMinor > payment.amountMinor ? inv.paidMinor - payment.amountMinor : 0n;
+      const status =
+        inv.status === "void"
+          ? "void"
+          : paid <= 0n
+            ? "sent"
+            : paid >= inv.totalMinor
+              ? "paid"
+              : "partially_paid";
+      await tx.update(invoices).set({ paidMinor: paid, status }).where(eq(invoices.id, inv.id));
+      await audit(tx, {
+        tenantId: ctx.tenant.id,
+        actorUserId: ctx.user.id,
+        action: "invoice.payment.reverse",
+        entityType: "invoice",
+        entityId: inv.id,
+        data: { amount: payment.amountMinor, transactionId: orig.id },
+      });
+      await markChanged(tx, ctx.tenant.id, "invoice", inv.id);
+    }
+  }
+  if (orig.kind === "capital_in") {
+    const contributions = await tx
+      .select()
+      .from(capitalContributions)
+      .where(
+        and(
+          eq(capitalContributions.tenantId, ctx.tenant.id),
+          eq(capitalContributions.transactionId, orig.id),
+        ),
+      );
+    for (const c of contributions) {
+      await tx.insert(capitalContributions).values({
+        tenantId: ctx.tenant.id,
+        partnerId: c.partnerId,
+        date,
+        kind: c.kind,
+        amountMinor: -c.amountMinor,
+        description: `${t("finance.reversalOf")}: ${c.description}`,
+        transactionId: reversalId,
+        createdBy: ctx.user.id,
+      });
+      await markChanged(tx, ctx.tenant.id, "capital", c.id);
+    }
+  }
 }
 
 export async function reverseTransaction(

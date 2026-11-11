@@ -1,6 +1,6 @@
 import { FilterBar, FilterDate, FilterSearch, FilterSelect, param } from "@/components/data/filter-bar";
 import { formatters } from "@/components/data/format";
-import { ActionButton } from "@/components/form/action-button";
+import { TextField } from "@/components/form/field";
 import { FormDialog } from "@/components/form/form-dialog";
 import { EmptyState, Section, StatCard } from "@/components/layout/page";
 import { Badge } from "@/components/ui/badge";
@@ -143,14 +143,17 @@ export default async function FinancePage({ params, searchParams }: PageProps<"/
                     {canWrite ? (
                       <TableCell>
                         {!tx.reversedAt && !tx.reversesId ? (
-                          <ActionButton
+                          <FormDialog
+                            trigger={t("finance.reverse")}
+                            title={t("finance.reverse")}
+                            description={t("finance.reverseHint")}
                             action={reverseTransactionAction.bind(null, tenant)}
-                            values={{ id: tx.id }}
-                            confirm={t("form.confirm")}
                             variant="ghost"
+                            icon={false}
                           >
-                            {t("finance.reverse")}
-                          </ActionButton>
+                            <input type="hidden" name="id" value={tx.id} />
+                            <TextField name="reason" label={t("finance.reverseReason")} maxLength={200} />
+                          </FormDialog>
                         ) : null}
                       </TableCell>
                     ) : null}

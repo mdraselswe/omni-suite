@@ -246,7 +246,9 @@ export async function decideRuleAction(
   formData: FormData,
 ): Promise<ActionState> {
   return runAction(async () => {
-    const { ctx } = await actionContext(slug, "partners.read", "all");
+    // Any partner who can see the rules decides for themselves; deciding for others
+    // needs profit.propose (checked in decideRule).
+    const { ctx } = await actionContext(slug, "partners.read");
     const input = z
       .object({ ruleId: fields.id(), partnerId: fields.id(), decision: z.enum(["approved", "rejected"]) })
       .parse(formObject(formData));
