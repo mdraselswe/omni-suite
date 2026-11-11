@@ -61,6 +61,38 @@ services:
       postgres:
         condition: service_healthy
 
+  # Off-server copy: every night the dumps and uploaded files go to a Cloudflare R2 bucket.
+  # Turned off until R2_* is set in .env (docs/setup-guide-bn.md, section 5).
+  # Dumps older than R2_KEEP_DAYS are removed from the bucket; files are only ever added.
+  offsite-backup:
+    image: rclone/rclone:1
+    restart: unless-stopped
+    environment:
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+      R2_BUCKET: ${R2_BUCKET:-omnisuite-backups}
+      R2_KEEP_DAYS: ${R2_KEEP_DAYS:-60}
+      RCLONE_CONFIG_R2_TYPE: s3
+      RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+      RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      # The token only has object access to one bucket, so don't try to create it.
+      RCLONE_CONFIG_R2_NO_CHECK_BUCKET: "true"
+    volumes:
+      - backups:/backups:ro
+      - files:/files:ro
+    entrypoint: >
+      sh -c 'if [ -z "$$R2_ACCOUNT_ID" ] || [ -z "$$RCLONE_CONFIG_R2_ACCESS_KEY_ID" ]; then
+        echo "offsite-backup: R2 not configured, sleeping"; exec sleep infinity; fi;
+        export RCLONE_CONFIG_R2_ENDPOINT="https://$$R2_ACCOUNT_ID.r2.cloudflarestorage.com";
+        sleep 3600;
+        while true; do
+          rclone copy /backups "r2:$$R2_BUCKET/db" --include "*.dump" &&
+          rclone delete "r2:$$R2_BUCKET/db" --min-age "$${R2_KEEP_DAYS}d" &&
+          rclone copy /files "r2:$$R2_BUCKET/files" &&
+          echo "offsite-backup: done $$(date -u +%FT%TZ)" ||
+          echo "offsite-backup: FAILED $$(date -u +%FT%TZ)";
+          sleep 86400; done'
+
 volumes:
   pgdata:
   files:

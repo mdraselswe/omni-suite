@@ -1,6 +1,6 @@
 # Deployment (one VPS)
 
-OmniSuite runs as three containers on one Linux VPS: **Postgres**, the **app** (Next.js server with the background worker inside it) and **Caddy** (HTTPS, including on-demand certificates for verified tenant domains). A fourth small container takes a nightly `pg_dump`.
+OmniSuite runs as three containers on one Linux VPS: **Postgres**, the **app** (Next.js server with the background worker inside it) and **Caddy** (HTTPS, including on-demand certificates for verified tenant domains). Two small containers take a nightly `pg_dump` and copy it (and uploaded files) to Cloudflare R2.
 
 ## 1. Server
 
@@ -42,6 +42,12 @@ Create a `.env` next to the compose file for compose itself:
 POSTGRES_PASSWORD=<long random password>
 APP_HOST=app.omniscopedigital.com
 ACME_EMAIL=<email for Let's Encrypt notices>
+# Off-server backups to Cloudflare R2 (optional; leave empty to turn off)
+R2_ACCOUNT_ID=
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+R2_BUCKET=omnisuite-backups
+R2_KEEP_DAYS=60
 ```
 
 ```bash
@@ -58,8 +64,9 @@ git pull && docker compose -f docker-compose.prod.yml up -d --build app
 
 ## 6. Backups
 
-- **Database:** the `db-backup` container writes `omnisuite-YYYY-MM-DD.dump` daily into the `backups` volume and keeps 14 days. Copy them off the server too (e.g. `rclone` to cloud storage). Restore: `pg_restore -c -d omnisuite file.dump`.
-- **Uploaded files:** the `files` volume (`/app/storage`). Include it in the off-server copy.
+- **Database:** the `db-backup` container writes `omnisuite-YYYY-MM-DD.dump` daily into the `backups` volume and keeps 14 days. The `offsite-backup` container copies them to Cloudflare R2 every night once `R2_*` is set (dumps kept `R2_KEEP_DAYS`, default 60). Restore: `pg_restore -c -d omnisuite file.dump`.
+- **Uploaded files:** the `files` volume (`/app/storage`), copied to R2 by the same container (files are only ever added there).
+- **Check it:** `docker compose -f docker-compose.prod.yml logs offsite-backup` shows `offsite-backup: done …` each night. Set-up steps (Bangla): `docs/setup-guide-bn.md`.
 - **Google Sheets / Drive JSON:** per business, one-way copies for people and portability (ADR 0007). Not a replacement for the two above.
 
 ## Moving to another domain later
