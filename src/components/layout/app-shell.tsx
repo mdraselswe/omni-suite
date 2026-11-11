@@ -17,6 +17,7 @@ export function AppShell({
   user,
   tenants,
   isPlatformAdmin,
+  accountHref,
   notifications,
   sidebarStyle,
   collapsed,
@@ -29,6 +30,8 @@ export function AppShell({
   user: { name: string; email: string; image: string | null };
   tenants: readonly MenuTenant[];
   isPlatformAdmin: boolean;
+  /** Where "Your account" goes (defaults to the app's /account page). */
+  accountHref?: string;
   /** Optional header slot (the notification bell). */
   notifications?: ReactNode;
   sidebarStyle: SidebarStyle;
@@ -61,7 +64,12 @@ export function AppShell({
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
             {notifications}
             <ThemeToggle />
-            <UserMenu user={user} tenants={tenants} isPlatformAdmin={isPlatformAdmin} />
+            <UserMenu
+              user={user}
+              tenants={tenants}
+              isPlatformAdmin={isPlatformAdmin}
+              accountHref={accountHref}
+            />
           </div>
         </header>
         <main id="content" className="flex-1 px-4 pt-2 pb-10 md:px-8 print:p-0">

@@ -27,6 +27,11 @@ export type PermissionDef = {
   /** Scopes this permission understands. Single "all" means no row-level scoping. */
   scopes: readonly Scope[];
   defaultRoles: Partial<Record<DefaultRoleKey, Scope>>;
+  /**
+   * Another module this permission depends on (e.g. the portal's projects page needs
+   * the Projects module). When that module is switched off, the permission doesn't count.
+   */
+  requiresModule?: string;
 };
 
 export type IconName =
@@ -86,12 +91,14 @@ const client = (
   key: string,
   label: MessageKey,
   defaultRoles: PermissionDef["defaultRoles"],
+  requiresModule?: string,
 ): PermissionDef => ({
   key,
   label,
   audience: "client",
   scopes: ALL,
   defaultRoles,
+  ...(requiresModule ? { requiresModule } : {}),
 });
 
 const owners = { owner: "all", admin: "all" } as const;
@@ -369,11 +376,16 @@ export const MODULES: readonly ModuleDef[] = [
     optional: false,
     permissions: [
       client("portal.access", "perm.portal.access", { client_owner: "all", client_member: "all" }),
-      client("portal.projects", "perm.portal.projects", { client_owner: "all", client_member: "all" }),
+      client(
+        "portal.projects",
+        "perm.portal.projects",
+        { client_owner: "all", client_member: "all" },
+        "projects",
+      ),
       client("portal.invoices", "perm.portal.invoices", { client_owner: "all" }),
-      client("portal.files", "perm.portal.files", { client_owner: "all", client_member: "all" }),
-      client("portal.approve", "perm.portal.approve", { client_owner: "all" }),
-      client("portal.proposals", "perm.portal.proposals", { client_owner: "all" }),
+      client("portal.files", "perm.portal.files", { client_owner: "all", client_member: "all" }, "files"),
+      client("portal.approve", "perm.portal.approve", { client_owner: "all" }, "projects"),
+      client("portal.proposals", "perm.portal.proposals", { client_owner: "all" }, "proposals"),
       client("portal.onboarding", "perm.portal.onboarding", { client_owner: "all" }),
     ],
     nav: [
@@ -438,6 +450,17 @@ export function permissionDef(key: string): PermissionDef | undefined {
 
 export function moduleOfPermission(key: string): ModuleDef | undefined {
   return MODULES.find((m) => m.permissions.some((p) => p.key === key));
+}
+
+/** Optional modules that must be switched on for a permission to count: its own and any it requires. */
+export function requiredModules(key: string): string[] {
+  const keys: string[] = [];
+  const own = moduleOfPermission(key);
+  if (own?.optional) keys.push(own.key);
+  const needed = permissionDef(key)?.requiresModule;
+  const dependency = needed ? MODULES.find((m) => m.key === needed) : undefined;
+  if (dependency?.optional) keys.push(dependency.key);
+  return keys;
 }
 
 /** Every permission granted to the owner role: everything internal. */

@@ -1,5 +1,5 @@
 import type { TenantSettings } from "@/lib/tenant-settings";
-import { moduleOfPermission } from "@/modules/catalog";
+import { requiredModules } from "@/modules/catalog";
 import type { EffectivePermissions, Scope } from "@/server/rbac/resolve";
 
 /** Everything a request inside a tenant needs. Built once per request. */
@@ -30,11 +30,25 @@ export class ForbiddenError extends Error {
   }
 }
 
+/** True when a module the permission needs (its own, or one it requires) is switched off. */
+function switchedOff(ctx: TenantContext, permission: string): boolean {
+  const disabled = ctx.tenant.settings.disabledModules;
+  return disabled.length > 0 && requiredModules(permission).some((key) => disabled.includes(key));
+}
+
+/**
+ * Drops permissions whose modules are switched off, so menus, `hasPermission`
+ * and direct `ctx.permissions` reads all agree with the module switches.
+ */
+export function withModuleGates(ctx: TenantContext): TenantContext {
+  if (ctx.tenant.settings.disabledModules.length === 0) return ctx;
+  const permissions = new Map([...ctx.permissions].filter(([permission]) => !switchedOff(ctx, permission)));
+  return { ...ctx, permissions };
+}
+
 /** Scope the member holds for a permission, or throws ForbiddenError. */
 export function requirePermission(ctx: TenantContext, permission: string, minimum: Scope = "own"): Scope {
-  const mod = moduleOfPermission(permission);
-  if (mod?.optional && ctx.tenant.settings.disabledModules.includes(mod.key))
-    throw new ForbiddenError(permission);
+  if (switchedOff(ctx, permission)) throw new ForbiddenError(permission);
   const held = ctx.permissions.get(permission);
   const rank = { own: 0, assigned: 1, all: 2 } as const;
   if (!held || rank[held] < rank[minimum]) throw new ForbiddenError(permission);

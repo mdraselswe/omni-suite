@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, LogOut, Plus, Shield } from "lucide-react";
+import { Check, LogOut, Plus, Shield, UserRound } from "lucide-react";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -20,18 +20,24 @@ import { initials } from "@/lib/shell";
 
 export type MenuTenant = { slug: string; name: string; current: boolean };
 
-/** Account menu: switch business, platform admin, sign out. */
+/** Account menu: your account, switch business, platform admin, sign out. */
 export function UserMenu({
   user,
   tenants,
   isPlatformAdmin,
+  accountHref = "/account/",
 }: {
   user: { name: string; email: string; image: string | null };
   tenants: readonly MenuTenant[];
   isPlatformAdmin: boolean;
+  /** The account page; an absolute app-host URL when the shell is served on a custom domain. */
+  accountHref?: string;
 }) {
   const router = useRouter();
-  const go = (href: string) => router.push(href as Route);
+  const go = (href: string) => {
+    if (/^https?:\/\//.test(href)) window.location.assign(href);
+    else router.push(href as Route);
+  };
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -55,6 +61,10 @@ export function UserMenu({
           <span className="truncate font-medium">{user.name}</span>
           <span className="truncate text-xs text-muted-foreground">{user.email}</span>
         </div>
+        <DropdownMenuItem onClick={() => go(accountHref)}>
+          <UserRound className="size-4" aria-hidden="true" />
+          {t("account.menu")}
+        </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
           <DropdownMenuLabel>{t("shell.businesses")}</DropdownMenuLabel>

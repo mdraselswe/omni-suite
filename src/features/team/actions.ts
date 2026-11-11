@@ -6,7 +6,7 @@ import { PERMISSIONS } from "@/modules/catalog";
 import { fields, formObject, runAction, type ActionState } from "@/server/action";
 import { actionContext } from "@/server/auth/session";
 import { db } from "@/server/db";
-import { appUrl, sendMail } from "@/server/mail";
+import { appUrl } from "@/server/mail";
 import { SCOPES, type Grant } from "@/server/rbac/resolve";
 import {
   addOverride,
@@ -35,13 +35,9 @@ export async function inviteAction(slug: string, _p: ActionState, formData: Form
       })
       .parse(raw);
     const roleIds = fields.all(formData, "roleIds");
+    // createInvitation queues the invitation email in its transaction.
     const { token } = await createInvitation(db(), ctx, { ...input, roleIds });
     const link = appUrl(`/invite/${token}`);
-    await sendMail({
-      to: input.email,
-      subject: `${ctx.user.name} invited you to ${ctx.tenant.name}`,
-      text: `${ctx.user.name} invited you to ${ctx.tenant.name} on OmniSuite.\n\nAccept the invitation: ${link}\n\nThe link expires in 14 days.`,
-    });
     return t("team.inviteSent", { link });
   });
 }

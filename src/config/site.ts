@@ -13,6 +13,7 @@ const site: SiteConfig = {
   locale: "en",
   dir: "ltr",
   render: "server",
+  domainVerifyLabel: "_omnisuite",
   theme: {
     defaultMode: "system",
     // Brand colour, gradients and chart colours: src/config/themes.ts.

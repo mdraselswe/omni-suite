@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
+  CopyLinkButton,
   InviteFields,
   inviteAction,
   listMembers,
@@ -166,10 +167,20 @@ export default async function TeamPage({ params }: PageProps<"/[tenant]/team">) 
                         {t("team.revoke")}
                       </ActionButton>
                     </div>
-                    <label className="grid gap-1 text-xs text-muted-foreground">
-                      {t("team.inviteLink")}
-                      <Input readOnly value={link} className="font-mono text-xs" />
-                    </label>
+                    <div className="grid gap-1">
+                      <label htmlFor={`invite-${inv.id}`} className="text-xs text-muted-foreground">
+                        {t("team.inviteLink")}
+                      </label>
+                      <div className="flex gap-2">
+                        <Input
+                          id={`invite-${inv.id}`}
+                          readOnly
+                          value={link}
+                          className="min-w-0 flex-1 font-mono text-xs"
+                        />
+                        <CopyLinkButton value={link} />
+                      </div>
+                    </div>
                   </li>
                 );
               })}

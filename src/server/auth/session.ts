@@ -3,19 +3,46 @@ import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { cache } from "react";
 import { db } from "@/server/db";
-import { ForbiddenError, requirePermission, type TenantContext } from "@/server/tenancy/context";
+import {
+  ForbiddenError,
+  requirePermission,
+  withModuleGates,
+  type TenantContext,
+} from "@/server/tenancy/context";
 import { buildTenantContext } from "@/server/tenancy/service";
 import type { Scope } from "@/server/rbac/resolve";
-import { getAuth, isPlatformAdminEmail } from "./auth";
+import { getAuth, isPlatformAdmin } from "./auth";
+import { boundTenantOf } from "./handoff-access";
 
-export type SessionUser = { id: string; name: string; email: string; image: string | null };
+export type SessionUser = {
+  id: string;
+  name: string;
+  email: string;
+  emailVerified: boolean;
+  image: string | null;
+};
 
-/** The signed-in user for this request, or null. Deduplicated per request. */
+/**
+ * The signed-in user plus, for a session made by the custom-domain handoff, the
+ * one business it is bound to. Deduplicated per request.
+ */
+export const getRequestSession = cache(
+  async (): Promise<{ user: SessionUser; boundTenant: string | null } | null> => {
+    const result = await getAuth().api.getSession({ headers: await headers() });
+    if (!result) return null;
+    const { id, name, email, emailVerified, image } = result.user;
+    const boundTenant = await boundTenantOf(db(), result.session);
+    return { user: { id, name, email, emailVerified, image: image ?? null }, boundTenant };
+  },
+);
+
+/**
+ * The signed-in user for account-wide pages (home, onboarding, invitations,
+ * account), or null. A business-bound session doesn't count here.
+ */
 export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
-  const result = await getAuth().api.getSession({ headers: await headers() });
-  if (!result) return null;
-  const { id, name, email, image } = result.user;
-  return { id, name, email, image: image ?? null };
+  const current = await getRequestSession();
+  return current && !current.boundTenant ? current.user : null;
 });
 
 export async function requireUser(): Promise<SessionUser> {
@@ -26,19 +53,22 @@ export async function requireUser(): Promise<SessionUser> {
 
 export async function requirePlatformAdmin(): Promise<SessionUser> {
   const user = await requireUser();
-  if (!isPlatformAdminEmail(user.email)) notFound();
+  if (!isPlatformAdmin(user)) notFound();
   return user;
 }
 
 /** Tenant context for pages and actions. Redirects or 404s when not allowed. */
 export const requireTenant = cache(async (slug: string): Promise<TenantContext> => {
-  const user = await requireUser();
-  const result = await buildTenantContext(db(), slug, user.id, isPlatformAdminEmail(user.email));
+  const current = await getRequestSession();
+  if (!current) redirect("/login");
+  if (current.boundTenant && current.boundTenant !== slug) notFound();
+  const platformAdmin = !current.boundTenant && isPlatformAdmin(current.user);
+  const result = await buildTenantContext(db(), slug, current.user.id, platformAdmin);
   if (!result.ok) {
     if (result.reason === "suspended") redirect("/suspended");
     notFound();
   }
-  return result.ctx;
+  return withModuleGates(result.ctx);
 });
 
 /** Tenant context plus a permission check (404 for pages: we don't reveal what exists). */

@@ -1,6 +1,9 @@
 import "server-only";
+import { createHmac } from "node:crypto";
 import { resolveTxt } from "node:dns/promises";
-import { and, asc, count, desc, eq, ilike, isNotNull, lt, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, ilike, inArray, isNotNull, isNull, lt, ne, or } from "drizzle-orm";
+import { site } from "@/config";
+import { serverEnv } from "@/config/env";
 import { t } from "@/i18n";
 import { fieldKey } from "@/lib/custom-fields";
 import { randomToken } from "@/lib/ids";
@@ -9,7 +12,16 @@ import { MODULES } from "@/modules/catalog";
 import { UserError } from "@/server/action";
 import { audit } from "@/server/audit";
 import type { Database, DbOrTx } from "@/server/db";
-import { auditLogs, customFieldDefs, memberships, tenantDomains, tenants, user } from "@/server/db/schema";
+import {
+  auditLogs,
+  customFieldDefs,
+  leads,
+  memberships,
+  projects,
+  tenantDomains,
+  tenants,
+  user,
+} from "@/server/db/schema";
 import type { TenantContext } from "@/server/tenancy/context";
 
 /* ─── Settings ─────────────────────────────────────────────────── */
@@ -51,6 +63,61 @@ export async function setModuleEnabled(
   if (enabled) disabled.delete(key);
   else disabled.add(key);
   await updateSettings(database, ctx, { settings: { disabledModules: [...disabled] } });
+}
+
+/**
+ * How many records still use stage / status keys that are about to be removed.
+ * Archived leads don't count (they aren't on the board).
+ */
+export async function keysInUse(
+  database: DbOrTx,
+  tenantId: string,
+  removed: { stages: string[]; statuses: string[] },
+): Promise<{ stages: Map<string, number>; statuses: Map<string, number> }> {
+  const stages = new Map<string, number>();
+  const statuses = new Map<string, number>();
+  if (removed.stages.length > 0) {
+    const rows = await database
+      .select({ key: leads.stage, n: count() })
+      .from(leads)
+      .where(
+        and(eq(leads.tenantId, tenantId), inArray(leads.stage, removed.stages), isNull(leads.archivedAt)),
+      )
+      .groupBy(leads.stage);
+    for (const r of rows) stages.set(r.key, r.n);
+  }
+  if (removed.statuses.length > 0) {
+    const rows = await database
+      .select({ key: projects.status, n: count() })
+      .from(projects)
+      .where(and(eq(projects.tenantId, tenantId), inArray(projects.status, removed.statuses)))
+      .groupBy(projects.status);
+    for (const r of rows) statuses.set(r.key, r.n);
+  }
+  return { stages, statuses };
+}
+
+/**
+ * Saves lead stages and project statuses. A key that records still use can't be
+ * removed (those records would drop off the board); the error says how many.
+ */
+export async function updatePipeline(
+  database: Database,
+  ctx: TenantContext,
+  input: Pick<TenantSettings, "pipelineStages" | "projectStatuses">,
+) {
+  const newStages = new Set(input.pipelineStages.map((s) => s.key));
+  const newStatuses = new Set(input.projectStatuses.map((s) => s.key));
+  const removed = {
+    stages: ctx.tenant.settings.pipelineStages.map((s) => s.key).filter((k) => !newStages.has(k)),
+    statuses: ctx.tenant.settings.projectStatuses.map((s) => s.key).filter((k) => !newStatuses.has(k)),
+  };
+  const used = await keysInUse(database, ctx.tenant.id, removed);
+  const stage = [...used.stages][0];
+  if (stage) throw new UserError(t("settings.stageInUse", { key: stage[0], count: stage[1] }));
+  const status = [...used.statuses][0];
+  if (status) throw new UserError(t("settings.statusInUse", { key: status[0], count: status[1] }));
+  await updateSettings(database, ctx, { settings: input });
 }
 
 /* ─── Custom fields ────────────────────────────────────────────── */
@@ -95,6 +162,63 @@ export async function addCustomField(
       entityType: "customField",
       data: { ...input, key },
     });
+  });
+}
+
+/** Changes a field's label, choices and "required". Its key and type stay, so saved values keep working. */
+export async function updateCustomField(
+  database: Database,
+  ctx: TenantContext,
+  id: string,
+  input: { label: string; options: string[]; required: boolean },
+) {
+  await database.transaction(async (tx) => {
+    const [field] = await tx
+      .select()
+      .from(customFieldDefs)
+      .where(and(eq(customFieldDefs.id, id), eq(customFieldDefs.tenantId, ctx.tenant.id)));
+    if (!field) throw new UserError(t("settings.fieldMissing"));
+    const options = field.type === "select" ? [...new Set(input.options)] : [];
+    if (field.type === "select" && options.length === 0) throw new UserError(t("settings.optionsNeeded"));
+    await tx
+      .update(customFieldDefs)
+      .set({ label: input.label, options, required: input.required })
+      .where(eq(customFieldDefs.id, id));
+    await audit(tx, {
+      tenantId: ctx.tenant.id,
+      actorUserId: ctx.user.id,
+      action: "customField.update",
+      entityType: "customField",
+      data: { key: field.key, label: input.label, options, required: input.required },
+    });
+  });
+}
+
+/** Moves a field one place up or down among the fields of the same record type. */
+export async function moveCustomField(
+  database: Database,
+  ctx: TenantContext,
+  id: string,
+  direction: "up" | "down",
+) {
+  await database.transaction(async (tx) => {
+    const [field] = await tx
+      .select()
+      .from(customFieldDefs)
+      .where(and(eq(customFieldDefs.id, id), eq(customFieldDefs.tenantId, ctx.tenant.id)));
+    if (!field) throw new UserError(t("settings.fieldMissing"));
+    const siblings = (await listCustomFields(tx, ctx.tenant.id)).filter((f) => f.entity === field.entity);
+    const from = siblings.findIndex((f) => f.id === id);
+    const to = direction === "up" ? from - 1 : from + 1;
+    const other = siblings[to];
+    if (from < 0 || !other) return;
+    siblings[to] = field;
+    siblings[from] = other;
+    // Rewrite positions 0..n so old duplicates or gaps can't make the order unstable.
+    for (const [position, f] of siblings.entries()) {
+      if (f.position !== position)
+        await tx.update(customFieldDefs).set({ position }).where(eq(customFieldDefs.id, f.id));
+    }
   });
 }
 
@@ -163,55 +287,116 @@ export async function listDomains(database: DbOrTx, tenantId: string) {
     .orderBy(asc(tenantDomains.createdAt));
 }
 
+type TxtLookup = (name: string) => Promise<string[][]>;
+
+/** DNS name of the ownership TXT record for a hostname, e.g. `_omnisuite.portal.example.com`. */
+export function domainVerifyName(hostname: string): string {
+  return `${site.domainVerifyLabel}.${hostname}`;
+}
+
+/**
+ * The TXT value a business must publish for a hostname. Derived from a secret,
+ * the business and the hostname: it is the same every time that business adds
+ * that hostname (a record they already published keeps working), and nobody
+ * else can produce it.
+ */
+export function domainToken(secret: string, tenantId: string, hostname: string): string {
+  const mac = createHmac("sha256", secret).update(`${tenantId}:${hostname}`).digest("base64url").slice(0, 24);
+  return `${site.domainVerifyLabel.slice(1)}-verify=${mac}`;
+}
+
+async function txtMatches(lookup: TxtLookup, hostname: string, token: string): Promise<boolean> {
+  try {
+    const records = await lookup(domainVerifyName(hostname));
+    return records.some((parts) => parts.join("") === token);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Adds a domain claim. Only a domain VERIFIED by another business is off limits.
+ * Another business's unverified claim doesn't block anyone: whoever proves
+ * ownership in DNS first gets the domain (the stale claim is replaced), so a
+ * domain can't be squatted.
+ */
 export async function addDomain(
   database: Database,
   ctx: TenantContext,
   hostnameInput: string,
   appHost: string,
+  options: { secret?: string; lookup?: TxtLookup } = {},
 ) {
   const hostname = normaliseHostname(hostnameInput);
   if (!hostname || hostname === appHost) throw new UserError(t("domains.invalid"));
-  const [taken] = await database
-    .select({ id: tenantDomains.id })
-    .from(tenantDomains)
-    .where(eq(tenantDomains.hostname, hostname));
-  if (taken) throw new UserError(t("domains.taken"));
+  const token = domainToken(options.secret ?? serverEnv().BETTER_AUTH_SECRET, ctx.tenant.id, hostname);
+  const [existing] = await database.select().from(tenantDomains).where(eq(tenantDomains.hostname, hostname));
+  let replaces: string | null = null;
+  if (existing) {
+    if (existing.tenantId === ctx.tenant.id) throw new UserError(t("domains.alreadyAdded"));
+    if (existing.verifiedAt) throw new UserError(t("domains.taken"));
+    // Someone else's unverified claim: it can be taken over only by proving ownership now.
+    if (!(await txtMatches(options.lookup ?? resolveTxt, hostname, token))) {
+      throw new UserError(t("domains.claimPending", { name: domainVerifyName(hostname), value: token }));
+    }
+    replaces = existing.id;
+  }
   await database.transaction(async (tx) => {
+    if (replaces) {
+      // Re-checked inside the transaction: never replace a claim that got verified meanwhile.
+      const [gone] = await tx
+        .delete(tenantDomains)
+        .where(and(eq(tenantDomains.id, replaces), isNull(tenantDomains.verifiedAt)))
+        .returning({ tenantId: tenantDomains.tenantId });
+      if (!gone) throw new UserError(t("domains.taken"));
+      await audit(tx, {
+        tenantId: gone.tenantId,
+        actorUserId: ctx.user.id,
+        action: "domain.claimReplaced",
+        entityType: "domain",
+        data: { hostname },
+      });
+    }
     await tx.insert(tenantDomains).values({
       tenantId: ctx.tenant.id,
       hostname,
-      verificationToken: `omnisuite-verify=${randomToken(16)}`,
+      verificationToken: token,
+      verifiedAt: replaces ? new Date() : null,
     });
     await audit(tx, {
       tenantId: ctx.tenant.id,
       actorUserId: ctx.user.id,
-      action: "domain.add",
+      action: replaces ? "domain.verify" : "domain.add",
       entityType: "domain",
       data: { hostname },
     });
   });
 }
 
-/** Checks the TXT record _omnisuite.<host>. */
+/** Checks the TXT record <label>.<host>. Refused if another business already verified the hostname. */
 export async function verifyDomain(
   database: Database,
   ctx: TenantContext,
   id: string,
-  lookup: (name: string) => Promise<string[][]> = resolveTxt,
+  lookup: TxtLookup = resolveTxt,
 ): Promise<boolean> {
   const [domain] = await database
     .select()
     .from(tenantDomains)
     .where(and(eq(tenantDomains.id, id), eq(tenantDomains.tenantId, ctx.tenant.id)));
   if (!domain) throw new UserError(t("domains.invalid"));
-  let records: string[][] = [];
-  try {
-    records = await lookup(`_omnisuite.${domain.hostname}`);
-  } catch {
-    records = [];
-  }
-  const ok = records.some((parts) => parts.join("") === domain.verificationToken);
-  if (!ok) return false;
+  const [elsewhere] = await database
+    .select({ id: tenantDomains.id })
+    .from(tenantDomains)
+    .where(
+      and(
+        eq(tenantDomains.hostname, domain.hostname),
+        ne(tenantDomains.tenantId, ctx.tenant.id),
+        isNotNull(tenantDomains.verifiedAt),
+      ),
+    );
+  if (elsewhere) throw new UserError(t("domains.taken"));
+  if (!(await txtMatches(lookup, domain.hostname, domain.verificationToken))) return false;
   await database.transaction(async (tx) => {
     await tx.update(tenantDomains).set({ verifiedAt: new Date() }).where(eq(tenantDomains.id, id));
     await audit(tx, {

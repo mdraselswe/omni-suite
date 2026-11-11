@@ -40,7 +40,11 @@ export async function seedDefaultRoles(
   return ids;
 }
 
-/** Restores a system role to its default permissions. */
+/**
+ * Restores a system role to its default permissions. Low level: callers acting
+ * for a member must run the escalation guard on the grants this adds/removes first
+ * (see resetRole in features/team).
+ */
 export async function resetRoleToDefault(tx: DbOrTx, tenantId: string, roleId: string): Promise<void> {
   const [role] = await tx
     .select()

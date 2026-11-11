@@ -1,12 +1,15 @@
 import "server-only";
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { site } from "@/config";
 import { assertSeatAvailable } from "@/features/billing";
 import { t } from "@/i18n";
 import { randomToken } from "@/lib/ids";
-import { DEFAULT_ROLE_KEYS, permissionDef, type Audience } from "@/modules/catalog";
+import { DEFAULT_ROLE_KEYS, defaultRoleTemplates, permissionDef, type Audience } from "@/modules/catalog";
 import { UserError } from "@/server/action";
 import { audit } from "@/server/audit";
 import type { Database, DbOrTx } from "@/server/db";
+import { appUrl } from "@/server/mail";
+import { queueMail } from "@/server/shared";
 import {
   clients,
   invitations,
@@ -22,7 +25,8 @@ import { canGrant, type Grant, type Scope } from "@/server/rbac/resolve";
 import { bumpPermissionsVersion, ownerMembershipIds, resetRoleToDefault } from "@/server/rbac/service";
 import type { TenantContext } from "@/server/tenancy/context";
 
-const INVITE_DAYS = 14;
+/** Days an invitation link stays valid (also quoted in the invitation email). */
+export const INVITE_DAYS = 14;
 
 /* ─── Guards ───────────────────────────────────────────────────── */
 
@@ -97,6 +101,19 @@ export async function createInvitation(
       expiresAt: new Date(Date.now() + INVITE_DAYS * 86_400_000),
       invitedBy: ctx.user.id,
     });
+    // Sent by the job runner only if this transaction commits.
+    const vars = {
+      inviter: ctx.user.name,
+      name: ctx.tenant.name,
+      app: site.name,
+      link: appUrl(`/invite/${token}`),
+      days: INVITE_DAYS,
+    };
+    await queueMail(tx, {
+      to: email,
+      subject: t("invite.mail.subject", vars),
+      text: t("invite.mail.body", vars),
+    });
     await audit(tx, {
       tenantId: ctx.tenant.id,
       actorUserId: ctx.user.id,
@@ -125,20 +142,29 @@ export async function invitationByToken(database: DbOrTx, token: string) {
   return row ?? null;
 }
 
-/** Accepts an invitation for the signed-in user. The email must match. */
+/**
+ * Accepts an invitation for the signed-in user. The email must match and be
+ * verified (read from the database, never trusted from the caller), so nobody
+ * can claim an invitation by signing up with someone else's address.
+ */
 export async function acceptInvitation(
   database: Database,
   token: string,
-  signedIn: { id: string; email: string },
+  signedIn: { id: string },
 ): Promise<{ slug: string; kind: Audience }> {
   return database.transaction(async (tx) => {
     const row = await invitationByToken(tx, token);
     if (!row || row.invitation.acceptedAt) throw new UserError(t("invite.invalid"));
     const inv = row.invitation;
     if (inv.expiresAt < new Date()) throw new UserError(t("invite.expired"));
-    if (inv.email !== signedIn.email.toLowerCase()) {
+    const [account] = await tx
+      .select({ email: user.email, emailVerified: user.emailVerified })
+      .from(user)
+      .where(eq(user.id, signedIn.id));
+    if (!account || inv.email !== account.email.toLowerCase()) {
       throw new UserError(t("invite.wrongEmail", { email: inv.email }));
     }
+    if (!account.emailVerified) throw new UserError(t("invite.verifyEmail", { email: inv.email }));
 
     const [existing] = await tx
       .select({ id: memberships.id })
@@ -296,9 +322,28 @@ export async function updateMember(
   await database.transaction(async (tx) => {
     const member = await memberById(tx, ctx.tenant.id, membershipId);
     if (!member) throw new UserError(t("team.memberMissing"));
-    if (input.status === "disabled") {
+    if (input.status !== member.status) {
       if (member.userId === ctx.user.id) throw new UserError(t("team.notSelf"));
+      // Switching someone off or on is as strong as changing their roles: only an owner
+      // may do it to an owner, and only someone who holds everything the person can do.
+      if (member.roles.some((r) => r.key === "owner")) {
+        const owners = await ownerMembershipIds(tx, ctx.tenant.id);
+        if (!owners.includes(ctx.membership.id)) throw new UserError(t("team.ownerOnly"));
+      }
+      assertCanGrantAll(
+        ctx,
+        await grantsOfRoles(
+          tx,
+          member.roles.map((r) => r.roleId),
+        ),
+      );
+    }
+    if (input.status === "disabled") {
       await assertKeepsAnOwner(tx, ctx.tenant.id, membershipId, false);
+    }
+    // Re-enabling a team member takes a seat again.
+    if (input.status === "active" && member.status !== "active" && member.kind === "internal") {
+      await assertSeatAvailable(tx, ctx.tenant);
     }
     await tx
       .update(memberships)
@@ -525,6 +570,17 @@ export async function deleteRole(database: Database, ctx: TenantContext, roleId:
 
 export async function resetRole(database: Database, ctx: TenantContext, roleId: string): Promise<void> {
   await database.transaction(async (tx) => {
+    const [role] = await tenantRoles(tx, ctx.tenant.id, [roleId]);
+    const template = defaultRoleTemplates().find((r) => r.key === role?.key);
+    if (!role || !role.isSystem || !template) throw new UserError(t("team.roleMissing"));
+    // Resetting is an edit like any other: everything it adds or removes must be within the actor's powers.
+    const before = await grantsOfRoles(tx, [roleId]);
+    const key = (g: Grant) => `${g.permission}:${g.scope}`;
+    const changed = [
+      ...template.grants.filter((g) => !before.some((b) => key(b) === key(g))),
+      ...before.filter((b) => !template.grants.some((g) => key(g) === key(b))),
+    ];
+    assertCanGrantAll(ctx, changed);
     await resetRoleToDefault(tx, ctx.tenant.id, roleId);
     await audit(tx, {
       tenantId: ctx.tenant.id,

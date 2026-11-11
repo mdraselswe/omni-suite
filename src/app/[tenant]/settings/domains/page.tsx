@@ -3,7 +3,13 @@ import { TextField } from "@/components/form/field";
 import { FormDialog } from "@/components/form/form-dialog";
 import { EmptyState, Section } from "@/components/layout/page";
 import { StatusBadge } from "@/components/data/status-badge";
-import { addDomainAction, listDomains, removeDomainAction, verifyDomainAction } from "@/features/settings";
+import {
+  addDomainAction,
+  domainVerifyName,
+  listDomains,
+  removeDomainAction,
+  verifyDomainAction,
+} from "@/features/settings";
 import { serverEnv } from "@/config/env";
 import { t } from "@/i18n";
 import { requireTenantPermission } from "@/server/auth/session";
@@ -75,7 +81,7 @@ export default async function DomainsPage({ params }: PageProps<"/[tenant]/setti
                 <p className="text-muted-foreground">{t("domains.instructions")}</p>
                 <ol className="grid list-decimal gap-1 pl-5 font-mono text-xs break-all">
                   <li>
-                    {t("domains.step1", { name: `_omnisuite.${d.hostname}`, value: d.verificationToken })}
+                    {t("domains.step1", { name: domainVerifyName(d.hostname), value: d.verificationToken })}
                   </li>
                   <li>{t("domains.step2", { host: d.hostname, target })}</li>
                 </ol>

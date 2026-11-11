@@ -57,6 +57,8 @@ export const siteSchema = z.object({
    * Can be overridden with RENDER_MODE. Switch with `pnpm mode static|server`.
    */
   render: z.enum(RENDER_MODES),
+  /** DNS label businesses add a TXT record under to prove they own a custom domain (`<label>.<their domain>`). */
+  domainVerifyLabel: z.string().regex(/^_[a-z0-9-]{1,40}$/),
   theme: z.object({
     defaultMode: z.enum(THEME_MODES),
     /** Colour preset (src/config/themes.ts): brand colour, gradients and chart colours. */

@@ -6,15 +6,10 @@ import { site } from "@/config";
 import { DEMO_ACCOUNTS, DEMO_PASSWORD, LoginForm, LoginIllustration } from "@/features/auth";
 import { t } from "@/i18n";
 import { authMethods } from "@/server/auth/auth";
+import { safeNextPath } from "@/server/auth/redirect";
 import { getSessionUser } from "@/server/auth/session";
 
 export const metadata: Metadata = { title: "Sign in" };
-
-/** Only same-app paths are allowed as the post-login destination. */
-function safeNext(value: string | string[] | undefined): string {
-  const next = typeof value === "string" ? value : "/";
-  return next.startsWith("/") && !next.startsWith("//") ? next : "/";
-}
 
 const POINTS = [
   { icon: ShieldCheck, label: "auth.point.secure" },
@@ -23,7 +18,8 @@ const POINTS = [
 ] as const;
 
 export default async function LoginPage({ searchParams }: PageProps<"/login">) {
-  const next = safeNext((await searchParams).next);
+  // Only same-app paths are allowed as the post-login destination.
+  const next = safeNextPath((await searchParams).next);
   if (await getSessionUser()) redirect(next as "/");
   const methods = authMethods();
   return (

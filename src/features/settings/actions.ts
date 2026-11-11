@@ -15,9 +15,12 @@ import {
   addCustomField,
   addDomain,
   deleteCustomField,
+  moveCustomField,
   removeDomain,
   setModuleEnabled,
   setTenantStatus,
+  updateCustomField,
+  updatePipeline,
   updateSettings,
   verifyDomain,
 } from "./service";
@@ -176,7 +179,7 @@ export async function updatePipelineAction(
     ) {
       throw new UserError(t("settings.badLines"));
     }
-    await updateSettings(db(), ctx, { settings: { pipelineStages: stages, projectStatuses: statuses } });
+    await updatePipeline(db(), ctx, { pipelineStages: stages, projectStatuses: statuses });
   });
 }
 
@@ -204,6 +207,50 @@ export async function addCustomFieldAction(
   });
 }
 
+function optionLines(value: string): string[] {
+  return value
+    .split("\n")
+    .map((o) => o.trim())
+    .filter(Boolean);
+}
+
+export async function updateCustomFieldAction(
+  slug: string,
+  _p: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  return runAction(async () => {
+    const { ctx } = await actionContext(slug, "settings.manage");
+    const input = z
+      .object({
+        id: fields.id(),
+        label: fields.required(80),
+        options: fields.text(2000),
+        required: fields.checkbox(),
+      })
+      .parse(formObject(formData));
+    await updateCustomField(db(), ctx, input.id, {
+      label: input.label,
+      options: optionLines(input.options),
+      required: input.required,
+    });
+  });
+}
+
+export async function moveCustomFieldAction(
+  slug: string,
+  _p: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  return runAction(async () => {
+    const { ctx } = await actionContext(slug, "settings.manage");
+    const input = z
+      .object({ id: fields.id(), direction: z.enum(["up", "down"]) })
+      .parse(formObject(formData));
+    await moveCustomField(db(), ctx, input.id, input.direction);
+  });
+}
+
 export async function deleteCustomFieldAction(
   slug: string,
   _p: ActionState,
@@ -224,6 +271,7 @@ export async function addDomainAction(
     const { ctx } = await actionContext(slug, "domains.manage");
     const { hostname } = z.object({ hostname: fields.required(253) }).parse(formObject(formData));
     await addDomain(db(), ctx, hostname, new URL(serverEnv().APP_URL).hostname);
+    clearHostCache();
   });
 }
 

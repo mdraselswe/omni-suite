@@ -2,6 +2,7 @@
 
 import { Eye, EyeOff } from "lucide-react";
 import type { Route } from "next";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
@@ -55,6 +56,8 @@ export function LoginForm({
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [busy, setBusy] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  /** Address a confirmation link was just sent to (after sign-up or an unverified sign-in). */
+  const [sentTo, setSentTo] = useState("");
   const done = () => {
     router.push(next as Route);
     router.refresh();
@@ -66,13 +69,27 @@ export function LoginForm({
     const email = String(data.get("email") ?? "");
     const password = String(data.get("password") ?? "");
     setBusy(true);
-    const result =
-      mode === "signin"
-        ? await authClient.signIn.email({ email, password })
-        : await authClient.signUp.email({ email, password, name: String(data.get("name") ?? "") });
+    if (mode === "signin") {
+      const result = await authClient.signIn.email({ email, password, callbackURL: next });
+      setBusy(false);
+      if (!result.error) return done();
+      // Unverified address: Better Auth has just sent a fresh confirmation link.
+      if (result.error.code === "EMAIL_NOT_VERIFIED") {
+        setSentTo(email);
+        toast.error(t("account.verifyFirst"));
+      } else toast.error(result.error.message ?? t("auth.failed"));
+      return;
+    }
+    const result = await authClient.signUp.email({
+      email,
+      password,
+      name: String(data.get("name") ?? ""),
+      callbackURL: next,
+    });
     setBusy(false);
     if (result.error) toast.error(result.error.message ?? t("auth.failed"));
-    else done();
+    else if (result.data.token) done();
+    else setSentTo(email);
   }
 
   async function demo(email: string) {
@@ -107,6 +124,11 @@ export function LoginForm({
               <Separator className="flex-1" />
             </div>
           ) : null}
+          {sentTo ? (
+            <p role="status" className="rounded-lg border bg-muted p-3 text-sm">
+              {t("account.checkEmail", { email: sentTo })}
+            </p>
+          ) : null}
           <form onSubmit={submit} method="post" className="grid gap-4">
             {mode === "signup" ? (
               <div className="grid gap-1.5">
@@ -119,7 +141,17 @@ export function LoginForm({
               <Input id="email" name="email" type="email" autoComplete="email" className="h-11" required />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="password">{t("auth.password")}</Label>
+              <div className="flex items-baseline justify-between gap-2">
+                <Label htmlFor="password">{t("auth.password")}</Label>
+                {mode === "signin" ? (
+                  <Link
+                    href="/reset-password"
+                    className="rounded-sm text-xs text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    {t("account.forgotPassword")}
+                  </Link>
+                ) : null}
+              </div>
               <div className="relative">
                 <Input
                   id="password"

@@ -17,6 +17,7 @@ export default async function PipelinePage({ params }: PageProps<"/[tenant]/sett
           <TextAreaField
             name="stages"
             label={t("settings.leadStages")}
+            hint={t("settings.keysInUseHint")}
             rows={8}
             className="font-mono"
             defaultValue={pipelineStages.map((s) => `${s.key} | ${s.label} | ${s.kind}`).join("\n")}

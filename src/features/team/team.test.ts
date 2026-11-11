@@ -92,17 +92,13 @@ describe("team and roles", () => {
       roleIds: [staff?.id ?? ""],
     });
     const otherId = await createUser(database, "Other", "other@example.com");
-    await expect(
-      acceptInvitation(database, token, { id: otherId, email: "other@example.com" }),
-    ).rejects.toThrow();
+    await expect(acceptInvitation(database, token, { id: otherId })).rejects.toThrow();
     const newId = await createUser(database, "New", "new@example.com");
-    expect(await acceptInvitation(database, token, { id: newId, email: "New@Example.com" })).toEqual({
+    expect(await acceptInvitation(database, token, { id: newId })).toEqual({
       slug: "team",
       kind: "internal",
     });
-    await expect(
-      acceptInvitation(database, token, { id: newId, email: "new@example.com" }),
-    ).rejects.toThrow();
+    await expect(acceptInvitation(database, token, { id: newId })).rejects.toThrow();
   });
 });
 
