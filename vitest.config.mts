@@ -17,8 +17,10 @@ export default defineConfig({
     css: false,
     restoreMocks: true,
     env: { TZ: "UTC" },
-    // Database tests start an in-memory Postgres per file.
-    testTimeout: 30_000,
-    hookTimeout: 60_000,
+    // Database tests start an in-memory Postgres (WASM) per file: heavy on CPU, so run
+    // at most half the cores at once and allow slow machines and busy CI runners time.
+    maxWorkers: "50%",
+    testTimeout: 90_000,
+    hookTimeout: 120_000,
   },
 });
