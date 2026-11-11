@@ -34,7 +34,7 @@ export default async function ProjectTemplatesPage({ params }: PageProps<"/[tena
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
           {templates.map((tpl) => (
-            <div key={tpl.id} className="grid content-start gap-3 rounded-lg border bg-card p-4">
+            <div key={tpl.id} className="grid content-start gap-3 surface p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="font-medium">{tpl.name}</h3>
                 <FormDialog

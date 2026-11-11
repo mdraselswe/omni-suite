@@ -76,7 +76,7 @@ export default async function RulesPage({ params }: PageProps<"/[tenant]/partner
           {rules.map((rule) => {
             const approved = rule.approvals.filter((a) => a.decision === "approved");
             return (
-              <li key={rule.id} className="grid gap-3 rounded-lg border p-4">
+              <li key={rule.id} className="grid gap-3 surface p-5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium">{t("rules.version", { version: rule.version })}</span>

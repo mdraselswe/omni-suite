@@ -16,7 +16,7 @@ export default async function ModulesPage({ params }: PageProps<"/[tenant]/setti
         {optionalModules().map((m) => {
           const on = !disabled.has(m.key);
           return (
-            <li key={m.key} className="flex items-center justify-between gap-3 rounded-lg border bg-card p-4">
+            <li key={m.key} className="flex items-center justify-between gap-3 surface p-4">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-medium">{t(m.label)}</span>
                 <Badge variant={on ? "default" : "outline"}>

@@ -23,7 +23,7 @@ export default async function PortalProposals({ params }: PageProps<"/[tenant]/p
       {rows.length === 0 ? (
         <EmptyState title={t("portal.nothing")} />
       ) : (
-        <ul className="divide-y rounded-lg border bg-card">
+        <ul className="divide-y overflow-hidden surface">
           {rows.map(({ proposal }) => (
             <li key={proposal.id}>
               <Link

@@ -5,7 +5,9 @@ import { t } from "@/i18n";
 import { parsePercentBp } from "@/lib/money";
 import { fields, formObject, runAction, UserError, type ActionState } from "@/server/action";
 import { actionContext, requirePlatformAdmin, requireTenant } from "@/server/auth/session";
+import { SIDEBAR_STYLES, THEME_PRESETS } from "@/config";
 import { serverEnv } from "@/config/env";
+import { HEX_COLOR } from "@/lib/theme";
 import { db } from "@/server/db";
 import { markAllRead } from "@/server/shared";
 import { clearHostCache } from "@/server/tenancy/hosts";
@@ -73,6 +75,43 @@ export async function updateGeneralAction(
         branding: { ...s.branding, displayName: input.displayName },
       },
     });
+  });
+}
+
+export async function updateBrandingAction(
+  slug: string,
+  _p: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  return runAction(async () => {
+    const { ctx } = await actionContext(slug, "settings.manage");
+    const input = z
+      .object({
+        preset: z.enum(["", ...THEME_PRESETS]),
+        brandColor: z
+          .string()
+          .trim()
+          .refine((v) => v === "" || HEX_COLOR.test(v), t("branding.colorInvalid")),
+        useBrandColor: fields.checkbox(),
+        sidebar: z.enum(["", ...SIDEBAR_STYLES]),
+        logoUrl: z
+          .string()
+          .trim()
+          .refine((v) => v === "" || /^https:\/\/\S+$/.test(v), t("branding.logoInvalid")),
+      })
+      .parse(formObject(formData));
+    await updateSettings(db(), ctx, {
+      settings: {
+        branding: {
+          ...ctx.tenant.settings.branding,
+          preset: input.preset,
+          brandColor: input.useBrandColor ? input.brandColor.toLowerCase() : "",
+          sidebar: input.sidebar,
+          logoUrl: input.logoUrl,
+        },
+      },
+    });
+    return t("branding.saved");
   });
 }
 

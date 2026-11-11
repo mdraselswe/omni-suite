@@ -48,7 +48,7 @@ export default async function BackupPage({ params, searchParams }: PageProps<"/[
           </Alert>
         ) : null}
 
-        <div className="grid gap-4 rounded-lg border bg-card p-4">
+        <div className="grid gap-4 surface p-4">
           {conn ? (
             <>
               <div className="grid gap-1 text-sm">

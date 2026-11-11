@@ -29,7 +29,7 @@ export function LineItemsTable({
   pricesIncludeTax: boolean;
 }) {
   return (
-    <Table>
+    <Table bare>
       <TableHeader>
         <TableRow>
           <TableHead>{t("items.description")}</TableHead>

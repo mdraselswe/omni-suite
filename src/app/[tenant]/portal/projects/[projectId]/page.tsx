@@ -70,7 +70,7 @@ export default async function PortalProject({ params }: PageProps<"/[tenant]/por
         {tasks.length === 0 ? (
           <EmptyState title={t("tasks.none")} />
         ) : (
-          <ul className="divide-y rounded-lg border bg-card">
+          <ul className="divide-y overflow-hidden surface">
             {tasks.map(({ task }) => {
               const waiting = task.needsApproval && task.status === "review" && !task.approvedAt;
               return (
@@ -115,7 +115,7 @@ export default async function PortalProject({ params }: PageProps<"/[tenant]/por
           ) : (
             <ul className="grid gap-3">
               {comments.map(({ comment, authorName }) => (
-                <li key={comment.id} className="grid gap-1 rounded-lg border bg-card p-3 text-sm">
+                <li key={comment.id} className="grid gap-1 surface p-3 text-sm">
                   <span className="text-xs text-muted-foreground">
                     {authorName ?? "—"} · {formatDateTime(comment.createdAt, timezone, locale)}
                   </span>
@@ -142,7 +142,7 @@ export default async function PortalProject({ params }: PageProps<"/[tenant]/por
             {files.length === 0 ? (
               <EmptyState title={t("files.none")} />
             ) : (
-              <ul className="divide-y rounded-lg border bg-card">
+              <ul className="divide-y overflow-hidden surface">
                 {files.map(({ file }) => (
                   <li
                     key={file.id}

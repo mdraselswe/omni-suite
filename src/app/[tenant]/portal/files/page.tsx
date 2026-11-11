@@ -29,10 +29,7 @@ export default async function PortalFiles({ params }: PageProps<"/[tenant]/porta
       <PageHeader title={t("nav.portal.files")} description={t("portal.filesSub")} />
 
       <Section title={t("portal.uploadTitle")} description={t("portal.uploadHint")}>
-        <ActionForm
-          action={uploadFileAction.bind(null, tenant)}
-          className="rounded-lg border bg-card p-4 sm:max-w-lg"
-        >
+        <ActionForm action={uploadFileAction.bind(null, tenant)} className="surface p-4 sm:max-w-lg">
           <UploadTarget
             clientId={clientId}
             projects={projects.map((p) => ({ value: p.id, label: p.name }))}

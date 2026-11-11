@@ -33,7 +33,7 @@ export default async function PrintInvoicePage({
         <PrintButton />
       </div>
 
-      <article className="grid gap-8 rounded-lg border bg-card p-6 text-card-foreground sm:p-10 print:border-0 print:p-0 print:shadow-none">
+      <article className="grid gap-8 surface p-6 text-card-foreground sm:p-10 print:border-0 print:p-0 print:shadow-none">
         <header className="flex flex-wrap items-start justify-between gap-6">
           <div className="grid gap-1">
             <p className="font-heading text-xl font-semibold">{business}</p>

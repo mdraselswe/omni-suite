@@ -33,7 +33,7 @@ export default async function NewInvoicePage({ params, searchParams }: PageProps
       <ActionForm
         action={createInvoiceAction.bind(null, tenant)}
         keepValues
-        className="max-w-3xl rounded-lg border bg-card p-4 sm:p-6"
+        className="max-w-3xl surface p-4 sm:p-6"
       >
         <InvoiceFields
           clients={clients}

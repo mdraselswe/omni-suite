@@ -29,7 +29,7 @@ export default async function PortalProjects({ params }: PageProps<"/[tenant]/po
               <li key={p.id}>
                 <Link
                   href={tenantHref(tenant, `portal/projects/${p.id}`)}
-                  className="grid gap-3 rounded-lg border bg-card p-4 hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
+                  className="grid gap-3 surface p-4 hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
                 >
                   <span className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-medium">{p.name}</span>

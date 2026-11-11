@@ -34,7 +34,7 @@ export default async function PortalInvoice({ params }: PageProps<"/[tenant]/por
         <PrintButton />
       </div>
 
-      <article className="grid gap-6 rounded-lg border bg-card p-4 sm:p-8 print:border-0 print:p-0">
+      <article className="grid gap-6 surface p-4 sm:p-8 print:border-0 print:p-0">
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div className="grid gap-1">
             <p className="font-heading text-xl font-semibold">{business}</p>

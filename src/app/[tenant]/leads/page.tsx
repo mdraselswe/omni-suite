@@ -143,7 +143,7 @@ export default async function LeadsPage({ params }: PageProps<"/[tenant]/leads">
               <section
                 key={stage.key}
                 aria-labelledby={`stage-${stage.key}`}
-                className="grid w-72 shrink-0 content-start gap-2 rounded-lg border bg-muted/40 p-2"
+                className="grid w-72 shrink-0 content-start gap-2 rounded-xl bg-muted p-2"
               >
                 <header className="flex items-baseline justify-between gap-2 px-1">
                   <h2 id={`stage-${stage.key}`} className="text-sm font-semibold">
@@ -159,10 +159,7 @@ export default async function LeadsPage({ params }: PageProps<"/[tenant]/leads">
                   </p>
                 ) : (
                   items.map(({ lead, ownerName }) => (
-                    <article
-                      key={lead.id}
-                      className="grid gap-2 rounded-md border bg-card p-3 text-sm shadow-xs"
-                    >
+                    <article key={lead.id} className="grid gap-2 surface p-3 text-sm">
                       <div className="grid gap-0.5">
                         <p className="font-medium">{lead.name}</p>
                         {lead.company ? (
@@ -201,7 +198,7 @@ export default async function LeadsPage({ params }: PageProps<"/[tenant]/leads">
                               id={`stage-select-${lead.id}`}
                               name="stage"
                               defaultValue={lead.stage}
-                              className="h-8 min-w-0 flex-1 rounded-md border border-input bg-transparent px-2 text-xs dark:bg-input/30"
+                              className="h-8 min-w-0 flex-1 rounded-md border border-input bg-card px-2 text-xs dark:bg-input/30"
                             >
                               {stageOptions.map((o) => (
                                 <option key={o.value} value={o.value}>

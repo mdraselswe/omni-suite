@@ -73,7 +73,7 @@ export default async function DistributionsPage({
                     name={`labor_${p.id}`}
                     inputMode="numeric"
                     defaultValue={manualLabor[p.id]?.toString() ?? ""}
-                    className="h-9 w-28 rounded-md border bg-transparent px-2 text-sm"
+                    className="h-9 w-28 rounded-md border bg-card px-2 text-sm"
                   />
                 </label>
               ))
@@ -144,7 +144,7 @@ export default async function DistributionsPage({
         ) : (
           <ul className="grid gap-3">
             {runs.map((run) => (
-              <li key={run.id} className="grid gap-2 rounded-lg border p-4">
+              <li key={run.id} className="grid gap-2 surface p-5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-medium">
                     {f.date(run.periodStart)} – {f.date(run.periodEnd)}

@@ -229,7 +229,7 @@ export default async function ProjectPage({ params }: PageProps<"/[tenant]/proje
                     {t(`tasks.status.${status}`)} ({group.length})
                   </h3>
                   {group.map(({ task, assigneeName }) => (
-                    <div key={task.id} className="grid gap-2 rounded-lg border bg-card p-3">
+                    <div key={task.id} className="grid gap-2 surface p-3">
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <p className="font-medium">{task.title}</p>
                         {canTasks ? (
@@ -437,7 +437,7 @@ export default async function ProjectPage({ params }: PageProps<"/[tenant]/proje
         ) : (
           <ol className="grid gap-3">
             {comments.map(({ comment, authorName }) => (
-              <li key={comment.id} className="grid gap-1 rounded-lg border bg-card p-3">
+              <li key={comment.id} className="grid gap-1 surface p-3">
                 <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                   <span className="font-medium text-foreground">{authorName ?? t("audit.system")}</span>
                   <span>{formatDateTime(comment.createdAt, tz, f.locale)}</span>

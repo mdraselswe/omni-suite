@@ -24,7 +24,7 @@ export default async function Home() {
           <li key={tn.slug}>
             <Link
               href={tenantHref(tn.slug, tn.kind === "client" ? "portal" : "")}
-              className="flex items-center justify-between rounded-lg border bg-card p-4 hover:bg-accent"
+              className="flex items-center justify-between surface p-4 hover:bg-accent"
             >
               <span className="font-medium">{tn.name}</span>
               <span className="text-xs text-muted-foreground">

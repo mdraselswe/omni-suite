@@ -19,7 +19,7 @@ import { requireTenantPermission } from "@/server/auth/session";
 import { db } from "@/server/db";
 
 const control =
-  "h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30";
+  "h-8 w-full rounded-md border border-input bg-card px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30";
 
 function modulesFor(audience: Audience) {
   return MODULES.map((m) => ({
@@ -101,7 +101,7 @@ export default async function RolesPage({ params }: PageProps<"/[tenant]/team/ro
       >
         <div className="grid gap-3 md:grid-cols-2">
           {roles.map((role) => (
-            <div key={role.id} className="grid content-start gap-3 rounded-lg border bg-card p-4">
+            <div key={role.id} className="grid content-start gap-3 surface p-4">
               <div className="flex flex-wrap items-center gap-2">
                 <h3 className="font-medium">{role.name}</h3>
                 <Badge variant="outline">{t(`team.kind.${role.audience}`)}</Badge>

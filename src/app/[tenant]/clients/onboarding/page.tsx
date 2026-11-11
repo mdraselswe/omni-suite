@@ -67,7 +67,7 @@ export default async function OnboardingTemplatesPage({ params }: PageProps<"/[t
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
           {templates.map((tp) => (
-            <article key={tp.id} className="grid content-start gap-3 rounded-lg border bg-card p-4">
+            <article key={tp.id} className="grid content-start gap-3 surface p-4">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="grid gap-0.5">
                   <h3 className="font-medium">{tp.name}</h3>

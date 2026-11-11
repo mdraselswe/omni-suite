@@ -42,7 +42,7 @@ export default async function PortalProposal({
         {t("portal.backToList")}
       </ButtonLink>
 
-      <article className="grid gap-6 rounded-lg border bg-card p-4 sm:p-8">
+      <article className="grid gap-6 surface p-4 sm:p-8">
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div className="grid gap-1">
             <p className="text-sm text-muted-foreground">
@@ -99,7 +99,7 @@ export default async function PortalProposal({
 
       {open ? (
         <Section title={t("portal.respondTitle")} description={t("portal.respondHint")}>
-          <div className="grid gap-4 rounded-lg border bg-card p-4 sm:max-w-md">
+          <div className="grid gap-4 surface p-4 sm:max-w-md">
             <ActionForm action={respond}>
               <input type="hidden" name="id" value={proposal.id} />
               <input type="hidden" name="decision" value="accept" />

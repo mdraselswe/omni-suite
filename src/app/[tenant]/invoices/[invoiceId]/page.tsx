@@ -159,7 +159,7 @@ export default async function InvoicePage({ params }: PageProps<"/[tenant]/invoi
         </div>
       </div>
 
-      <article className="grid gap-6 rounded-lg border bg-card p-4 sm:p-8">
+      <article className="grid gap-6 surface p-4 sm:p-8">
         <header className="grid gap-4 sm:grid-cols-2">
           <div className="grid gap-1">
             <p className="text-xs font-medium text-muted-foreground uppercase">{t("invoices.billTo")}</p>

@@ -25,10 +25,7 @@ export default async function PortalOnboarding({ params }: PageProps<"/[tenant]/
 
       {open ? (
         <Section title={open.templateName}>
-          <ActionForm
-            action={submitOnboardingAction.bind(null, tenant)}
-            className="rounded-lg border bg-card p-4 sm:max-w-2xl"
-          >
+          <ActionForm action={submitOnboardingAction.bind(null, tenant)} className="surface p-4 sm:max-w-2xl">
             <input type="hidden" name="id" value={open.id} />
             {open.fields.map((field) =>
               field.type === "textarea" ? (
@@ -61,7 +58,7 @@ export default async function PortalOnboarding({ params }: PageProps<"/[tenant]/
           title={r.templateName}
           actions={<StatusBadge status={r.status} label={t(`onboarding.status.${r.status}`)} />}
         >
-          <div className="grid gap-4 rounded-lg border bg-card p-4">
+          <div className="grid gap-4 surface p-4">
             {r.submittedAt ? (
               <p className="text-sm text-muted-foreground">
                 {t("portal.submittedOn", { date: f.date(r.submittedAt.toISOString().slice(0, 10)) })}

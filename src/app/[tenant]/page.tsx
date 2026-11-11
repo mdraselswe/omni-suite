@@ -1,8 +1,24 @@
+import {
+  AlertCircle,
+  FolderKanban,
+  Hourglass,
+  ListTodo,
+  PiggyBank,
+  Receipt,
+  Repeat,
+  Target,
+  TrendingUp,
+  Wallet,
+} from "lucide-react";
+import type { Route } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { AreaChart } from "@/components/data/area-chart";
 import { formatters } from "@/components/data/format";
-import { EmptyState, PageHeader, Section, StatCard } from "@/components/layout/page";
+import { StatusBadge } from "@/components/data/status-badge";
+import { EmptyState, PageHeader, Panel, StatCard } from "@/components/layout/page";
 import { ButtonLink } from "@/components/ui/button-link";
+import { Progress } from "@/components/ui/progress";
 import { pipelineSummary } from "@/features/crm";
 import { listAccounts, monthlyTotals, profitAndLoss } from "@/features/finance";
 import { listInvoices, monthlyRecurring, receivables } from "@/features/invoices";
@@ -18,22 +34,27 @@ import {
   today,
 } from "@/lib/dates";
 import { tenantHref } from "@/lib/href";
+import { cn } from "@/lib/utils";
 import { requireTenant } from "@/server/auth/session";
 import { db } from "@/server/db";
 import { hasPermission, isModuleEnabled } from "@/server/tenancy/context";
 import { navFor } from "@/server/tenancy/nav";
 
-const TREND_MONTHS = 6;
+const RANGES = [6, 12] as const;
 
 /** Runs `fn` only when allowed; otherwise resolves to null (keeps Promise.all flat). */
 function when<T>(allowed: boolean, fn: () => Promise<T>): Promise<T | null> {
   return allowed ? fn() : Promise.resolve(null);
 }
 
-export default async function DashboardPage({ params }: PageProps<"/[tenant]">) {
+const rowLink =
+  "-mx-3 flex flex-wrap items-center justify-between gap-2 rounded-lg px-3 py-3 text-sm outline-none hover:bg-accent focus-visible:bg-accent";
+
+export default async function DashboardPage({ params, searchParams }: PageProps<"/[tenant]">) {
   const { tenant } = await params;
   const ctx = await requireTenant(tenant);
   if (ctx.membership.kind === "client") redirect(tenantHref(tenant, "portal"));
+  const range = (await searchParams).range === "12" ? 12 : 6;
 
   const f = formatters(ctx);
   const now = today(ctx.tenant.settings.timezone);
@@ -45,7 +66,7 @@ export default async function DashboardPage({ params }: PageProps<"/[tenant]">) 
   const projectScope = isModuleEnabled(ctx, "projects") ? ctx.permissions.get("projects.read") : undefined;
   const hasTasks = isModuleEnabled(ctx, "projects");
 
-  const trendFrom = monthStart(addMonths(now, -(TREND_MONTHS - 1)));
+  const trendFrom = monthStart(addMonths(now, -(range - 1)));
   const runwayFrom = monthStart(addMonths(now, -3));
   const runwayTo = addDays(monthStart(now), -1);
 
@@ -71,27 +92,27 @@ export default async function DashboardPage({ params }: PageProps<"/[tenant]">) 
       when(canDash && projectScope !== undefined, () => listProjects(database, ctx, projectScope ?? "own")),
     ]);
 
-  const tasksBlock = hasTasks ? (
-    <Section title={t("dash.dueTasks")}>
+  const firstName = ctx.user.name.split(/\s+/)[0] ?? ctx.user.name;
+
+  const tasksPanel = hasTasks ? (
+    <Panel title={t("dash.dueTasks")}>
       {!tasks || tasks.length === 0 ? (
-        <EmptyState title={t("dash.noTasks")} />
+        <EmptyState title={t("dash.noTasks")} icon={ListTodo} bare />
       ) : (
-        <ul className="divide-y rounded-lg border bg-card">
+        <ul className="divide-y">
           {tasks.map(({ task, projectName }) => (
             <li key={task.id}>
-              <Link
-                href={tenantHref(tenant, `projects/${task.projectId}`)}
-                className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
-              >
+              <Link href={tenantHref(tenant, `projects/${task.projectId}`)} className={rowLink}>
                 <span className="grid min-w-0">
                   <span className="truncate font-medium">{task.title}</span>
                   <span className="truncate text-xs text-muted-foreground">{projectName}</span>
                 </span>
                 {task.dueDate ? (
                   <span
-                    className={
-                      task.dueDate < now ? "text-xs text-destructive" : "text-xs text-muted-foreground"
-                    }
+                    className={cn(
+                      "text-xs",
+                      task.dueDate < now ? "text-destructive" : "text-muted-foreground",
+                    )}
                   >
                     {t("dash.dueOn", { date: f.date(task.dueDate) })}
                   </span>
@@ -101,29 +122,31 @@ export default async function DashboardPage({ params }: PageProps<"/[tenant]">) 
           ))}
         </ul>
       )}
-    </Section>
+    </Panel>
   ) : null;
 
   if (!canDash) {
     const links = navFor(ctx).filter((item) => item.href !== tenantHref(tenant));
     return (
-      <div className="grid gap-8">
-        <PageHeader title={t("dash.welcome", { name: ctx.user.name })} />
-        <Section title={t("dash.goTo")} description={t("dash.goToSub", { business: ctx.tenant.name })}>
-          <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {links.map((item) => (
-              <li key={item.href}>
-                <Link
-                  href={item.href}
-                  className="block rounded-lg border bg-card p-4 font-medium hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
-                >
-                  {item.label}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </Section>
-        {tasksBlock}
+      <div className="grid gap-6">
+        <PageHeader
+          title={t("dash.welcome", { name: ctx.user.name })}
+          description={t("dash.goToSub", { business: ctx.tenant.name })}
+        />
+        <ul className="grid stagger gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {links.map((item) => (
+            <li key={item.href}>
+              <Link
+                href={item.href}
+                className="flex hover-lift items-center justify-between gap-3 surface p-5 font-medium outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+              >
+                {item.label}
+                <span className="text-xs font-normal text-muted-foreground">{item.group}</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+        {tasksPanel}
       </div>
     );
   }
@@ -134,46 +157,155 @@ export default async function DashboardPage({ params }: PageProps<"/[tenant]">) 
   const spend3 = (spend ?? []).reduce((sum, m) => sum + m.expenseMinor, 0n);
   const avgSpend = spend3 / 3n;
   const runway = avgSpend > 0n ? Number((cash * 10n) / avgSpend) / 10 : null;
-  const doneStatuses = new Set(ctx.tenant.settings.projectStatuses.filter((s) => s.done).map((s) => s.key));
-  const activeProjects = projects?.filter((p) => !doneStatuses.has(p.status)).length;
+  const statuses = ctx.tenant.settings.projectStatuses;
+  const doneStatuses = new Set(statuses.filter((s) => s.done).map((s) => s.key));
+  const openProjects = (projects ?? []).filter((p) => !doneStatuses.has(p.status));
 
   // Every month in the window, even ones without transactions.
-  const months = Array.from({ length: TREND_MONTHS }, (_, i) =>
-    monthStart(addMonths(trendFrom, i)).slice(0, 7),
-  );
+  const months = Array.from({ length: range }, (_, i) => monthStart(addMonths(trendFrom, i)).slice(0, 7));
   const series = months.map((m) => {
     const row = trend?.find((r) => r.month === m);
     return { month: m, income: row?.incomeMinor ?? 0n, expense: row?.expenseMinor ?? 0n };
   });
-  const max = series.reduce((acc, s) => (s.income > acc ? s.income : s.expense > acc ? s.expense : acc), 0n);
-  const pct = (v: bigint) => (max > 0n && v > 0n ? Math.max(2, Number((v * 1000n) / max) / 10) : 0);
+  const totalIncome = series.reduce((sum, s) => sum + s.income, 0n);
+  const totalSpend = series.reduce((sum, s) => sum + s.expense, 0n);
+  const hasTrend = totalIncome > 0n || totalSpend > 0n;
+  const major = (v: bigint) => Number(v) / 100;
+
+  const highlights = [
+    canFinance ? (
+      <StatCard
+        key="cash"
+        gradient={1}
+        icon={Wallet}
+        label={t("dash.cash")}
+        value={f.money(cash)}
+        hint={t("dash.cashHint")}
+      />
+    ) : null,
+    canFinance ? (
+      <StatCard
+        key="month"
+        gradient={2}
+        icon={TrendingUp}
+        label={t("dash.profitMonth")}
+        value={f.money(month?.profitMinor ?? 0n)}
+        hint={t("dash.profitHint")}
+      />
+    ) : null,
+    canInvoices ? (
+      <StatCard
+        key="owed"
+        gradient={3}
+        icon={Receipt}
+        label={t("dash.receivable")}
+        value={f.money(owed?.totalMinor ?? 0n)}
+        hint={t("dash.overdue", { amount: f.money(owed?.overdueMinor ?? 0n) })}
+      />
+    ) : null,
+    pipeline ? (
+      <StatCard
+        key="pipeline"
+        gradient={4}
+        icon={Target}
+        label={t("dash.pipeline")}
+        value={f.money(pipeline.valueMinor)}
+        hint={t("dash.pipelineHint", { count: pipeline.count })}
+      />
+    ) : null,
+  ].filter(Boolean);
 
   return (
-    <div className="grid gap-8">
-      <PageHeader title={t("dash.title")} description={t("dash.sub")} />
+    <div className="grid gap-6">
+      <PageHeader title={t("dash.greeting", { name: firstName })} description={t("dash.sub")} />
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className={cn("grid gap-6", canFinance && "lg:grid-cols-3")}>
+        {canFinance ? (
+          <Panel
+            className="animate-rise lg:col-span-2"
+            title={t("dash.overview")}
+            description={t("dash.overviewSub", { months: range })}
+            actions={
+              <nav aria-label={t("dash.range")} className="flex rounded-lg bg-muted p-1 text-xs">
+                {RANGES.map((value) => (
+                  <Link
+                    key={value}
+                    href={`${tenantHref(tenant)}${value === 6 ? "" : "?range=12"}` as Route}
+                    aria-current={range === value ? "page" : undefined}
+                    scroll={false}
+                    className={cn(
+                      "rounded-md px-3 py-1.5 font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
+                      range === value &&
+                        "bg-primary text-primary-foreground shadow-sm hover:text-primary-foreground",
+                    )}
+                  >
+                    {t(value === 6 ? "dash.range6" : "dash.range12")}
+                  </Link>
+                ))}
+              </nav>
+            }
+          >
+            <dl className="mb-4 flex flex-wrap gap-x-10 gap-y-2">
+              <div>
+                <dt className="text-xs text-muted-foreground">{t("dash.income")}</dt>
+                <dd className="font-heading text-2xl font-medium tabular-nums">{f.money(totalIncome)}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-muted-foreground">{t("dash.expense")}</dt>
+                <dd className="font-heading text-2xl font-medium tabular-nums">{f.money(totalSpend)}</dd>
+              </div>
+            </dl>
+            {hasTrend ? (
+              <AreaChart
+                id="dash-trend"
+                caption={t("dash.overview")}
+                labels={series.map((s) => formatMonth(`${s.month}-01`, f.locale, false))}
+                tableLabels={series.map((s) => formatMonth(`${s.month}-01`, f.locale))}
+                series={[
+                  {
+                    name: t("dash.income"),
+                    color: 1,
+                    values: series.map((s) => major(s.income)),
+                    formatted: series.map((s) => f.money(s.income)),
+                  },
+                  {
+                    name: t("dash.expense"),
+                    color: 2,
+                    values: series.map((s) => major(s.expense)),
+                    formatted: series.map((s) => f.money(s.expense)),
+                  },
+                ]}
+              />
+            ) : (
+              <EmptyState title={t("dash.trendNone")} icon={TrendingUp} bare />
+            )}
+          </Panel>
+        ) : null}
+
+        {highlights.length > 0 ? (
+          <div
+            className={cn(
+              "grid stagger content-start gap-4 sm:grid-cols-2",
+              canFinance ? "lg:grid-cols-1" : "xl:grid-cols-4",
+            )}
+          >
+            {highlights}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="grid stagger gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {canFinance ? (
           <>
             <StatCard
-              label={t("dash.cash")}
-              value={f.money(cash)}
-              hint={t("dash.cashHint")}
-              tone={cash < 0n ? "negative" : "default"}
-            />
-            <StatCard
-              label={t("dash.profitMonth")}
-              value={f.money(month?.profitMinor ?? 0n)}
-              hint={t("dash.profitHint")}
-              tone={(month?.profitMinor ?? 0n) < 0n ? "negative" : "positive"}
-            />
-            <StatCard
+              icon={PiggyBank}
               label={t("dash.profitFy")}
               value={f.money(fy?.profitMinor ?? 0n)}
               hint={t("dash.profitHint")}
               tone={(fy?.profitMinor ?? 0n) < 0n ? "negative" : "positive"}
             />
             <StatCard
+              icon={Hourglass}
               label={t("dash.runway")}
               value={
                 runway === null
@@ -186,99 +318,72 @@ export default async function DashboardPage({ params }: PageProps<"/[tenant]">) 
           </>
         ) : null}
         {canInvoices ? (
-          <>
-            <StatCard
-              label={t("dash.receivable")}
-              value={f.money(owed?.totalMinor ?? 0n)}
-              hint={t("dash.overdue", { amount: f.money(owed?.overdueMinor ?? 0n) })}
-              tone={(owed?.overdueMinor ?? 0n) > 0n ? "negative" : "default"}
-            />
-            <StatCard label={t("dash.mrr")} value={f.money(mrr ?? 0n)} hint={t("dash.mrrHint")} />
-          </>
+          <StatCard icon={Repeat} label={t("dash.mrr")} value={f.money(mrr ?? 0n)} hint={t("dash.mrrHint")} />
         ) : null}
-        {pipeline ? (
+        {projects ? (
           <StatCard
-            label={t("dash.pipeline")}
-            value={f.money(pipeline.valueMinor)}
-            hint={t("dash.pipelineHint", { count: pipeline.count })}
-          />
-        ) : null}
-        {activeProjects !== undefined ? (
-          <StatCard
+            icon={FolderKanban}
             label={t("dash.activeProjects")}
-            value={String(activeProjects)}
+            value={String(openProjects.length)}
             hint={t("dash.activeProjectsHint")}
           />
         ) : null}
       </div>
 
-      {canFinance ? (
-        <Section title={t("dash.trend")}>
-          {max === 0n ? (
-            <EmptyState title={t("dash.trendNone")} />
-          ) : (
-            <figure className="grid gap-3 rounded-lg border bg-card p-4">
-              <div className="flex items-center gap-4 text-xs text-muted-foreground" aria-hidden="true">
-                <span className="flex items-center gap-1.5">
-                  <span className="size-2.5 rounded-sm bg-primary" />
-                  {t("dash.income")}
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="size-2.5 rounded-sm bg-muted-foreground/40" />
-                  {t("dash.expense")}
-                </span>
-              </div>
-              <div className="grid h-44 grid-cols-6 items-end gap-2 sm:gap-4" aria-hidden="true">
-                {series.map((s) => (
-                  <div key={s.month} className="grid h-full grid-rows-[1fr_auto] gap-1">
-                    <div className="flex h-full items-end justify-center gap-0.5 sm:gap-1">
-                      <div
-                        className="w-full max-w-6 rounded-t-sm bg-primary"
-                        style={{ height: `${pct(s.income)}%` }}
-                        title={`${t("dash.income")}: ${f.money(s.income)}`}
+      <div className="grid gap-6 lg:grid-cols-3">
+        {projects ? (
+          <Panel
+            title={t("dash.projects")}
+            actions={
+              <ButtonLink href={tenantHref(tenant, "projects")} variant="ghost" size="sm">
+                {t("dash.viewAll")}
+              </ButtonLink>
+            }
+          >
+            {openProjects.length === 0 ? (
+              <EmptyState title={t("dash.noProjects")} icon={FolderKanban} bare />
+            ) : (
+              <ul className="grid gap-5">
+                {openProjects.slice(0, 5).map((p) => {
+                  const percent = p.taskCount > 0 ? (p.doneCount / p.taskCount) * 100 : 0;
+                  return (
+                    <li key={p.id} className="grid gap-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <Link
+                          href={tenantHref(tenant, `projects/${p.id}`)}
+                          className="grid min-w-0 rounded-sm text-sm outline-none hover:text-primary focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          <span className="truncate font-medium">{p.name}</span>
+                          {p.clientName ? (
+                            <span className="truncate text-xs text-muted-foreground">{p.clientName}</span>
+                          ) : null}
+                        </Link>
+                        <StatusBadge
+                          status={p.status}
+                          label={statuses.find((s) => s.key === p.status)?.label ?? p.status}
+                        />
+                      </div>
+                      <Progress
+                        value={percent}
+                        label={t("dash.progress", { name: p.name, percent: Math.round(percent) })}
                       />
-                      <div
-                        className="w-full max-w-6 rounded-t-sm bg-muted-foreground/40"
-                        style={{ height: `${pct(s.expense)}%` }}
-                        title={`${t("dash.expense")}: ${f.money(s.expense)}`}
-                      />
-                    </div>
-                    <span className="truncate text-center text-[11px] text-muted-foreground">
-                      {formatMonth(`${s.month}-01`, f.locale)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-              <figcaption className="sr-only">
-                <table>
-                  <caption>{t("dash.trend")}</caption>
-                  <thead>
-                    <tr>
-                      <th scope="col">{t("dash.month")}</th>
-                      <th scope="col">{t("dash.income")}</th>
-                      <th scope="col">{t("dash.expense")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {series.map((s) => (
-                      <tr key={s.month}>
-                        <th scope="row">{formatMonth(`${s.month}-01`, f.locale)}</th>
-                        <td>{f.money(s.income)}</td>
-                        <td>{f.money(s.expense)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </figcaption>
-            </figure>
-          )}
-        </Section>
-      ) : null}
+                      <p className="text-xs text-muted-foreground">
+                        {p.taskCount > 0
+                          ? t("dash.tasksDone", { done: p.doneCount, total: p.taskCount })
+                          : t("dash.noTasksYet")}
+                      </p>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </Panel>
+        ) : null}
 
-      <div className="grid gap-8 lg:grid-cols-2">
-        {tasksBlock}
+        {tasksPanel}
+
         {canInvoices ? (
-          <Section
+          <Panel
             title={t("dash.overdueInvoices")}
             actions={
               <ButtonLink href={tenantHref(tenant, "invoices?status=overdue")} variant="ghost" size="sm">
@@ -287,15 +392,12 @@ export default async function DashboardPage({ params }: PageProps<"/[tenant]">) 
             }
           >
             {!overdue || overdue.length === 0 ? (
-              <EmptyState title={t("dash.noOverdue")} />
+              <EmptyState title={t("dash.noOverdue")} icon={AlertCircle} bare />
             ) : (
-              <ul className="divide-y rounded-lg border bg-card">
-                {overdue.slice(0, 8).map(({ invoice, clientName }) => (
+              <ul className="divide-y">
+                {overdue.slice(0, 6).map(({ invoice, clientName }) => (
                   <li key={invoice.id}>
-                    <Link
-                      href={tenantHref(tenant, `invoices/${invoice.id}`)}
-                      className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
-                    >
+                    <Link href={tenantHref(tenant, `invoices/${invoice.id}`)} className={rowLink}>
                       <span className="grid min-w-0">
                         <span className="truncate font-medium">
                           {invoice.number} · {clientName}
@@ -304,7 +406,7 @@ export default async function DashboardPage({ params }: PageProps<"/[tenant]">) 
                           {t("dash.daysOverdue", { days: daysBetween(invoice.dueDate, now) })}
                         </span>
                       </span>
-                      <span className="tabular-nums">
+                      <span className="font-medium tabular-nums">
                         {f.money(invoice.totalMinor - invoice.paidMinor, invoice.currency)}
                       </span>
                     </Link>
@@ -312,7 +414,7 @@ export default async function DashboardPage({ params }: PageProps<"/[tenant]">) 
                 ))}
               </ul>
             )}
-          </Section>
+          </Panel>
         ) : null}
       </div>
     </div>

@@ -42,7 +42,7 @@ export default async function DomainsPage({ params }: PageProps<"/[tenant]/setti
       ) : (
         <ul className="grid gap-3">
           {domains.map((d) => (
-            <li key={d.id} className="grid gap-3 rounded-lg border bg-card p-4">
+            <li key={d.id} className="grid gap-3 surface p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <span className="font-medium break-all">{d.hostname}</span>

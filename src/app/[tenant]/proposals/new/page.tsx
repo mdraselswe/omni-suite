@@ -20,11 +20,7 @@ export default async function NewProposalPage({
   return (
     <div className="mx-auto grid max-w-3xl gap-4">
       <PageHeader title={t("proposals.new")} description={t("proposals.sub")} className="mb-2" />
-      <ActionForm
-        action={createProposalAction.bind(null, tenant)}
-        keepValues
-        className="rounded-lg border bg-card p-4 sm:p-6"
-      >
+      <ActionForm action={createProposalAction.bind(null, tenant)} keepValues className="surface p-4 sm:p-6">
         <ProposalFields
           clients={clients}
           settings={ctx.tenant.settings}

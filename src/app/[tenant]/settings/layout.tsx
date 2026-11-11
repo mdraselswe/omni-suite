@@ -19,6 +19,7 @@ export default async function SettingsLayout({ children, params }: LayoutProps<"
   if (general) {
     items.push(
       { href: tenantHref(tenant, "settings"), label: t("settings.general"), exact: true },
+      { href: tenantHref(tenant, "settings/branding"), label: t("settings.branding") },
       { href: tenantHref(tenant, "settings/modules"), label: t("settings.modules") },
       { href: tenantHref(tenant, "settings/fields"), label: t("settings.customFields") },
       { href: tenantHref(tenant, "settings/pipeline"), label: t("settings.pipeline") },

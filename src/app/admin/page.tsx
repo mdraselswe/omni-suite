@@ -10,7 +10,7 @@ import { requirePlatformAdmin } from "@/server/auth/session";
 import { db } from "@/server/db";
 
 const control =
-  "h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30";
+  "h-9 w-full rounded-md border border-input bg-card px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30";
 
 export default async function AdminPage() {
   await requirePlatformAdmin();
@@ -24,10 +24,7 @@ export default async function AdminPage() {
       ) : (
         <ul className="grid gap-3">
           {rows.map(({ tenant, members }) => (
-            <li
-              key={tenant.id}
-              className="grid gap-3 rounded-lg border bg-card p-4 md:grid-cols-[1fr_auto] md:items-end"
-            >
+            <li key={tenant.id} className="grid gap-3 surface p-4 md:grid-cols-[1fr_auto] md:items-end">
               <div className="grid gap-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <Link href={tenantHref(tenant.slug)} className="font-medium hover:underline">

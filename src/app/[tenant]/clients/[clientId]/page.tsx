@@ -161,7 +161,7 @@ export default async function ClientPage({ params }: PageProps<"/[tenant]/client
       </div>
 
       <Section title={t("clients.details")}>
-        <dl className="grid gap-3 rounded-lg border bg-card p-4 text-sm sm:grid-cols-2">
+        <dl className="grid gap-3 surface p-4 text-sm sm:grid-cols-2">
           {[
             [t("form.email.label"), client.email],
             [t("form.phone"), client.phone],
@@ -217,7 +217,7 @@ export default async function ClientPage({ params }: PageProps<"/[tenant]/client
         ) : (
           <div className="grid gap-3">
             {onboarding.map((req) => (
-              <article key={req.id} className="grid gap-4 rounded-lg border bg-card p-4">
+              <article key={req.id} className="grid gap-4 surface p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="font-medium">{req.templateName}</p>
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">

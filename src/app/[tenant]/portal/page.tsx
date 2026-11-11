@@ -86,7 +86,7 @@ export default async function PortalHome({ params }: PageProps<"/[tenant]/portal
 
       {awaiting.length > 0 ? (
         <Section title={t("portal.awaiting")}>
-          <ul className="divide-y rounded-lg border bg-card">
+          <ul className="divide-y overflow-hidden surface">
             {awaiting.map(({ task }) => (
               <li key={task.id}>
                 <Link
@@ -107,7 +107,7 @@ export default async function PortalHome({ params }: PageProps<"/[tenant]/portal
             {active.length === 0 ? (
               <EmptyState title={t("portal.nothing")} />
             ) : (
-              <ul className="divide-y rounded-lg border bg-card">
+              <ul className="divide-y overflow-hidden surface">
                 {active.map((p) => (
                   <li key={p.id}>
                     <Link
@@ -131,7 +131,7 @@ export default async function PortalHome({ params }: PageProps<"/[tenant]/portal
             {unpaid.length === 0 ? (
               <EmptyState title={t("portal.allPaid")} />
             ) : (
-              <ul className="divide-y rounded-lg border bg-card">
+              <ul className="divide-y overflow-hidden surface">
                 {unpaid.map(({ invoice }) => (
                   <li key={invoice.id}>
                     <Link
@@ -163,7 +163,7 @@ export default async function PortalHome({ params }: PageProps<"/[tenant]/portal
 
         {openProposals.length > 0 ? (
           <Section title={t("portal.pendingProposals")}>
-            <ul className="divide-y rounded-lg border bg-card">
+            <ul className="divide-y overflow-hidden surface">
               {openProposals.map(({ proposal }) => (
                 <li key={proposal.id}>
                   <Link
