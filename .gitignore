@@ -61,3 +61,6 @@ auto-upgrade-report.md
 
 # Uploaded files (FILE_STORAGE_DIR)
 /storage/
+
+# Agent worktrees (local only)
+.claude/worktrees/
