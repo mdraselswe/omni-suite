@@ -14,6 +14,7 @@ import path from "node:path";
 import sharp from "sharp";
 import { features, site } from "../src/config/index.ts";
 import { pageUrl, ROUTES, SITEMAP_ROUTES } from "../src/config/routes.ts";
+import { themePresets } from "../src/config/themes.ts";
 import { toHexColor } from "./lib/color.ts";
 
 const PUBLIC = path.resolve("public");
@@ -36,8 +37,9 @@ write(
 
 // App icon: a rounded tile in the brand colour with the first letter of the short name.
 const mode = site.theme.defaultMode === "dark" ? "dark" : "light";
-const brand = toHexColor(site.theme.primary.light);
-const onBrand = toHexColor(site.theme.primaryForeground.light);
+const preset = themePresets[site.theme.preset];
+const brand = toHexColor(preset.primary.light);
+const onBrand = toHexColor(preset.primaryForeground.light);
 const bg = toHexColor(site.theme.background[mode]);
 const letter = (site.shortName.trim()[0] ?? "A").toUpperCase().replace(/[<&>]/g, "");
 

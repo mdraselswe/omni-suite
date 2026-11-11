@@ -17,6 +17,7 @@
   --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
   --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted: var(--sidebar-muted);
   --color-sidebar: var(--sidebar);
   --color-chart-5: var(--chart-5);
   --color-chart-4: var(--chart-4);
@@ -28,6 +29,9 @@
   --color-border: var(--border);
   --color-destructive: var(--destructive);
   --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-brand-accent: var(--brand-accent-color);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -40,85 +44,133 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
+  --radius-sm: calc(var(--radius) * 0.4);
+  --radius-md: calc(var(--radius) * 0.6);
+  --radius-lg: calc(var(--radius) * 0.8);
+  --radius-xl: var(--radius);
+  --radius-2xl: calc(var(--radius) * 1.35);
+  --radius-3xl: calc(var(--radius) * 1.8);
+  --radius-4xl: calc(var(--radius) * 2.2);
+  --shadow-surface: var(--surface-shadow);
 }
 
-/* Brand colours come from src/config/site.ts (set as --brand* on <html>). */
+/*
+ * Design tokens. Brand values (--brand*, --gradient-*, --page-bg, --radius, --surface-*)
+ * come from src/config/site.ts + src/config/themes.ts, and a business can override the
+ * brand ones in Settings → Branding. They are set in a <style> tag by the layouts.
+ */
 :root {
-  --background: var(--page-bg, oklch(1 0 0));
-  --foreground: oklch(0.145 0 0);
+  --background: var(--page-bg, oklch(0.975 0.004 255));
+  --foreground: oklch(0.29 0.018 255);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: var(--foreground);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: var(--brand, oklch(0.205 0 0));
-  --primary-foreground: var(--brand-foreground, oklch(0.985 0 0));
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.51 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+  --popover-foreground: var(--foreground);
+  --primary: var(--brand, oklch(0.52 0.17 290));
+  --primary-foreground: var(--brand-foreground, oklch(1 0 0));
+  --brand-accent-color: var(--brand-accent, oklch(0.6 0.12 170));
+  --secondary: color-mix(in oklch, var(--primary) 10%, var(--card));
+  --secondary-foreground: color-mix(in oklch, var(--primary) 82%, black);
+  --muted: oklch(0.965 0.005 255);
+  --muted-foreground: oklch(0.5 0.022 255);
+  --accent: color-mix(in oklch, var(--primary) 8%, var(--card));
+  --accent-foreground: color-mix(in oklch, var(--primary) 82%, black);
   --destructive: oklch(0.505 0.213 27.518);
-  --success: oklch(0.508 0.118 165.612);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --success: oklch(0.48 0.118 165.612);
+  --warning: oklch(0.5 0.13 62);
+  --info: oklch(0.48 0.15 245);
+  --border: oklch(0.925 0.007 255);
+  --input: oklch(0.9 0.008 255);
+  --ring: var(--primary);
+  --chart-1: var(--primary);
+  --chart-2: var(--brand-accent-color);
+  --chart-3: var(--gradient-2-from, oklch(0.55 0.18 0));
+  --chart-4: var(--gradient-4-from, oklch(0.6 0.15 60));
+  --chart-5: oklch(0.75 0.01 255);
+  --radius: 0.75rem;
+  --shadow-tinted: 0 8px 20px color-mix(in oklch, var(--primary) 16%, transparent);
+  --shadow-soft: 0 4px 16px oklch(0.25 0.02 255 / 0.08);
+  --surface-shadow: var(--shadow-tinted);
+  --surface-border: transparent;
+  --header-control-shadow: 0 5px 10px oklch(0 0 0 / 0.08);
+  --sidebar-ring: var(--ring);
+  --sidebar-shadow: 0 5px 10px oklch(0 0 0 / 0.07);
+}
+
+/* Light sidebar (the default). Declared on the attribute too, so a light preview inside a dark sidebar stays light. */
+:root,
+[data-sidebar="light"] {
+  --sidebar: var(--card);
+  --sidebar-foreground: oklch(0.38 0.02 255);
+  --sidebar-muted: oklch(0.5 0.022 255);
+  --sidebar-primary: color-mix(in oklch, var(--primary) 14%, var(--card));
+  --sidebar-primary-foreground: color-mix(in oklch, var(--primary) 88%, black);
+  --sidebar-accent: oklch(0.965 0.005 255);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: var(--border);
 }
 
 .dark {
-  --background: var(--page-bg-dark, oklch(0.145 0 0));
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: var(--brand-dark, oklch(0.922 0 0));
-  --primary-foreground: var(--brand-foreground-dark, oklch(0.205 0 0));
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
+  --background: var(--page-bg-dark, oklch(0.17 0.012 270));
+  --foreground: oklch(0.95 0.005 255);
+  --card: oklch(0.215 0.016 270);
+  --popover: oklch(0.235 0.016 270);
+  --primary: var(--brand-dark, oklch(0.76 0.14 290));
+  --primary-foreground: var(--brand-foreground-dark, oklch(0.2 0.03 285));
+  --brand-accent-color: var(--brand-accent-dark, oklch(0.8 0.13 170));
+  --secondary: color-mix(in oklch, var(--primary) 16%, var(--card));
+  --secondary-foreground: color-mix(in oklch, var(--primary) 70%, white);
+  --muted: oklch(0.26 0.014 270);
+  --muted-foreground: oklch(0.73 0.015 260);
+  --accent: color-mix(in oklch, var(--primary) 14%, var(--card));
+  --accent-foreground: color-mix(in oklch, var(--primary) 55%, white);
   --destructive: oklch(0.704 0.191 22.216);
   --success: oklch(0.765 0.177 163.223);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --warning: oklch(0.8 0.14 75);
+  --info: oklch(0.75 0.12 240);
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 14%);
+  --chart-5: oklch(0.5 0.015 260);
+  --shadow-tinted: 0 8px 24px oklch(0 0 0 / 0.35);
+  --shadow-soft: 0 4px 16px oklch(0 0 0 / 0.3);
+  --surface-border: oklch(1 0 0 / 7%);
+  --header-control-shadow: 0 5px 10px oklch(0 0 0 / 0.3);
+  --sidebar-shadow: 0 5px 10px oklch(0 0 0 / 0.3);
+}
+
+.dark,
+.dark [data-sidebar="light"] {
+  --sidebar: var(--card);
+  --sidebar-foreground: oklch(0.86 0.01 260);
+  --sidebar-muted: oklch(0.7 0.015 260);
+  --sidebar-primary: color-mix(in oklch, var(--primary) 18%, var(--card));
+  --sidebar-primary-foreground: color-mix(in oklch, var(--primary) 60%, white);
+  --sidebar-accent: oklch(0.26 0.014 270);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: var(--border);
+}
+
+/* Sidebar styles (site.theme.sidebar, or a business's choice). */
+[data-sidebar="dark"] {
+  --sidebar: oklch(0.22 0.025 275);
+  --sidebar-foreground: oklch(0.88 0.01 260);
+  --sidebar-muted: oklch(0.72 0.02 260);
+  --sidebar-primary: color-mix(in oklch, var(--primary) 30%, oklch(0.22 0.025 275));
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.28 0.025 275);
+  --sidebar-accent-foreground: oklch(1 0 0);
+  --sidebar-border: oklch(1 0 0 / 8%);
+}
+
+[data-sidebar="brand"] {
+  --sidebar: var(--primary);
+  --sidebar-foreground: var(--primary-foreground);
+  --sidebar-muted: color-mix(in oklch, var(--primary-foreground) 92%, var(--primary));
+  --sidebar-primary: color-mix(in oklch, var(--primary-foreground) 18%, var(--primary));
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: color-mix(in oklch, var(--primary-foreground) 10%, var(--primary));
+  --sidebar-accent-foreground: var(--primary-foreground);
+  --sidebar-border: color-mix(in oklch, var(--primary-foreground) 15%, transparent);
 }
 
 @layer base {
@@ -130,6 +182,11 @@
   }
   html {
     @apply font-sans;
+  }
+  h1,
+  h2,
+  h3 {
+    @apply font-heading;
   }
 }
 
@@ -144,13 +201,135 @@
   }
 }
 
+/* A card-like panel: background, corner radius, depth and border from the theme. */
+@utility surface {
+  background-color: var(--card);
+  color: var(--card-foreground);
+  border-radius: var(--radius);
+  box-shadow: var(--surface-shadow);
+  border: 1px solid var(--surface-border);
+}
+
+/* Round white controls in the header (search, bell, theme, avatar). */
+@utility header-control {
+  background-color: var(--card);
+  box-shadow: var(--header-control-shadow);
+}
+
+/* Stat card backgrounds; white text is checked against every stop (src/lib/theme.test.ts). */
+@utility bg-gradient-1 {
+  background-image: linear-gradient(135deg, var(--gradient-1-from), var(--gradient-1-to));
+  color: white;
+}
+@utility bg-gradient-2 {
+  background-image: linear-gradient(135deg, var(--gradient-2-from), var(--gradient-2-to));
+  color: white;
+}
+@utility bg-gradient-3 {
+  background-image: linear-gradient(135deg, var(--gradient-3-from), var(--gradient-3-to));
+  color: white;
+}
+@utility bg-gradient-4 {
+  background-image: linear-gradient(135deg, var(--gradient-4-from), var(--gradient-4-to));
+  color: white;
+}
+@utility bg-brand-panel {
+  background-image: linear-gradient(150deg, var(--primary), color-mix(in oklch, var(--primary) 70%, black));
+  color: var(--primary-foreground);
+}
+
+/* Motion: transform and opacity only. All of it switches off with reduced motion (below). */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes grow-y {
+  from {
+    transform: scaleY(0);
+  }
+}
+@keyframes grow-x {
+  from {
+    transform: scaleX(0);
+  }
+}
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@utility animate-rise {
+  animation: rise 0.5s cubic-bezier(0.21, 0.68, 0.24, 1) both;
+}
+@utility animate-grow-y {
+  transform-origin: bottom;
+  animation: grow-y 0.7s cubic-bezier(0.21, 0.68, 0.24, 1) both;
+}
+@utility animate-grow-x {
+  transform-origin: left;
+  transform-box: fill-box;
+  animation: grow-x 1s cubic-bezier(0.21, 0.68, 0.24, 1) both;
+}
+@utility animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+/* Children rise one after another. */
+@utility stagger {
+  & > * {
+    animation: rise 0.5s cubic-bezier(0.21, 0.68, 0.24, 1) both;
+  }
+  & > :nth-child(2) {
+    animation-delay: 50ms;
+  }
+  & > :nth-child(3) {
+    animation-delay: 100ms;
+  }
+  & > :nth-child(4) {
+    animation-delay: 150ms;
+  }
+  & > :nth-child(5) {
+    animation-delay: 200ms;
+  }
+  & > :nth-child(6) {
+    animation-delay: 250ms;
+  }
+  & > :nth-child(n + 7) {
+    animation-delay: 300ms;
+  }
+}
+@utility hover-lift {
+  transition: transform 0.2s ease;
+  &:hover {
+    transform: translateY(-2px);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+@media print {
+  .surface,
+  [class*="surface"] {
+    box-shadow: none;
   }
 }

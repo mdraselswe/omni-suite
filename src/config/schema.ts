@@ -14,6 +14,18 @@ export type RenderMode = (typeof RENDER_MODES)[number];
 export const THEME_MODES = ["system", "light", "dark"] as const;
 export type ThemeMode = (typeof THEME_MODES)[number];
 
+/** Colour presets in src/config/themes.ts. A business can pick one in Settings → Branding. */
+export const THEME_PRESETS = ["violet", "ocean", "emerald", "sunset", "rose", "graphite"] as const;
+export type ThemePresetKey = (typeof THEME_PRESETS)[number];
+
+/** Sidebar look: white, dark, or filled with the brand colour. */
+export const SIDEBAR_STYLES = ["light", "dark", "brand"] as const;
+export type SidebarStyle = (typeof SIDEBAR_STYLES)[number];
+
+/** Card depth: brand-tinted shadow, neutral shadow, or flat with a border. */
+export const SURFACE_STYLES = ["tinted", "soft", "flat"] as const;
+export type SurfaceStyle = (typeof SURFACE_STYLES)[number];
+
 export const SOCIAL_KINDS = [
   "facebook",
   "instagram",
@@ -47,14 +59,14 @@ export const siteSchema = z.object({
   render: z.enum(RENDER_MODES),
   theme: z.object({
     defaultMode: z.enum(THEME_MODES),
-    /** Brand colour for buttons, links and focus rings, per theme. */
-    primary: z.object({ light: color, dark: color }),
-    /** Text colour on top of the brand colour, per theme. */
-    primaryForeground: z.object({ light: color, dark: color }),
-    /** Page background used for the app icon and browser UI, per theme. */
+    /** Colour preset (src/config/themes.ts): brand colour, gradients and chart colours. */
+    preset: z.enum(THEME_PRESETS),
+    /** Page background behind the cards, per theme. Also used for the browser UI. */
     background: z.object({ light: color, dark: color }),
-    /** Base corner radius, e.g. "0.625rem". */
+    /** Base corner radius, e.g. "0.75rem". Cards use it; smaller parts scale from it. */
     radius: z.string().regex(/^\d*\.?\d+(rem|px)$/),
+    sidebar: z.enum(SIDEBAR_STYLES),
+    surface: z.enum(SURFACE_STYLES),
   }),
   contact: z.object({
     email: z.email().optional(),

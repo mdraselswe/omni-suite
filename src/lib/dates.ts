@@ -79,10 +79,12 @@ export function formatDate(iso: string | null | undefined, locale = "en-AU"): st
 }
 
 /** "Jul 2026". */
-export function formatMonth(iso: string, locale = "en-AU"): string {
-  return new Intl.DateTimeFormat(locale, { month: "short", year: "numeric", timeZone: "UTC" }).format(
-    parse(iso),
-  );
+export function formatMonth(iso: string, locale = "en-AU", withYear = true): string {
+  return new Intl.DateTimeFormat(locale, {
+    month: "short",
+    ...(withYear ? { year: "numeric" } : {}),
+    timeZone: "UTC",
+  }).format(parse(iso));
 }
 
 export function formatDateTime(value: Date | null | undefined, timeZone: string, locale = "en-AU"): string {

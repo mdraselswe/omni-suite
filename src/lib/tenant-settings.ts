@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SIDEBAR_STYLES, THEME_PRESETS } from "@/config";
 
 /**
  * Everything a business can configure without code (ADR 0009).
@@ -47,11 +48,31 @@ export const tenantSettingsSchema = z.object({
       { key: "done", label: "Done", done: true },
     ]),
   disabledModules: z.array(z.string()).default([]),
+  /** Look of the team area and client portal. Empty values use the platform defaults (src/config/site.ts). */
   branding: z
     .object({
       displayName: z.string().default(""),
-      logoUrl: z.string().default(""),
-      accentColor: z.string().default(""),
+      /** https link to a logo image. */
+      logoUrl: z
+        .string()
+        .regex(/^(https:\/\/\S+)?$/)
+        .catch("")
+        .default(""),
+      /** Colour preset key from src/config/themes.ts, or "". */
+      preset: z
+        .enum(["", ...THEME_PRESETS])
+        .catch("")
+        .default(""),
+      /** Own brand colour (#rrggbb) that replaces the preset's, or "". */
+      brandColor: z
+        .string()
+        .regex(/^(#[0-9a-fA-F]{6})?$/)
+        .catch("")
+        .default(""),
+      sidebar: z
+        .enum(["", ...SIDEBAR_STYLES])
+        .catch("")
+        .default(""),
     })
     .prefault({}),
 });

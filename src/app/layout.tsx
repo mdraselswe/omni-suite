@@ -1,11 +1,11 @@
 import type { Metadata, Viewport } from "next";
-import type { CSSProperties } from "react";
 import { ThemeScript } from "@/components/layout/theme-script";
 import { Toaster } from "@/components/ui/sonner";
 import { features, isProduction, site } from "@/config";
 import { fontVariables } from "@/config/fonts";
 import { InstallCard, OfflineBanner, PwaScript } from "@/features/pwa";
 import { locale, t } from "@/i18n";
+import { platformThemeVariables, themeCss } from "@/lib/theme";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -40,16 +40,8 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-/** Brand values from config become CSS variables; globals.css maps them onto the shadcn tokens. */
-const brandVars = {
-  "--brand": site.theme.primary.light,
-  "--brand-dark": site.theme.primary.dark,
-  "--brand-foreground": site.theme.primaryForeground.light,
-  "--brand-foreground-dark": site.theme.primaryForeground.dark,
-  "--page-bg": site.theme.background.light,
-  "--page-bg-dark": site.theme.background.dark,
-  "--radius": site.theme.radius,
-} as CSSProperties;
+/** Theme values from config become CSS variables; globals.css maps them onto the design tokens. */
+const platformCss = themeCss(":root", platformThemeVariables());
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
@@ -59,9 +51,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       suppressHydrationWarning
       data-scroll-behavior="smooth"
       className={`${fontVariables} ${site.theme.defaultMode === "dark" ? "dark" : ""} h-full antialiased`}
-      style={brandVars}
     >
       <head>
+        <style>{platformCss}</style>
         <ThemeScript />
         {features.pwa ? <PwaScript serviceWorker={isProduction} /> : null}
       </head>

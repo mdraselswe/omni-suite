@@ -15,10 +15,12 @@ const site: SiteConfig = {
   render: "server",
   theme: {
     defaultMode: "system",
-    primary: { light: "oklch(0.52 0.24 292)", dark: "oklch(0.76 0.14 290)" },
-    primaryForeground: { light: "oklch(0.99 0.002 90)", dark: "oklch(0.2 0.03 285)" },
-    background: { light: "#fbfaf8", dark: "#0b0b14" },
-    radius: "0.5rem",
+    // Brand colour, gradients and chart colours: src/config/themes.ts.
+    preset: "violet",
+    background: { light: "#f5f7fa", dark: "#0f1117" },
+    radius: "0.75rem",
+    sidebar: "light",
+    surface: "tinted",
   },
   contact: {
     email: "omniscope.digital@gmail.com",
