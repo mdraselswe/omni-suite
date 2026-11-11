@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { serverEnv } from "@/config/env";
-import { cleanHost, isAppHost, slugForHost } from "@/server/tenancy/hosts";
+import { isAppHost, requestHost, slugForHost } from "@/server/tenancy/hosts";
 
 /**
  * Custom domains (ADR 0004). On a verified tenant domain:
@@ -11,7 +11,7 @@ import { cleanHost, isAppHost, slugForHost } from "@/server/tenancy/hosts";
  * The app host itself passes straight through without any lookup.
  */
 export async function proxy(request: NextRequest) {
-  const host = cleanHost(request.headers.get("x-forwarded-host") ?? request.headers.get("host"));
+  const host = requestHost(request.headers);
   if (isAppHost(host)) return NextResponse.next();
 
   const slug = await slugForHost(host);

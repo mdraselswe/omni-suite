@@ -40,6 +40,10 @@ Create a `.env` next to the compose file for compose itself:
 
 ```bash
 POSTGRES_PASSWORD=<long random password>
+# The same two values as in .env.production: compose refuses to start without them,
+# and the app refuses to start in production with the public development defaults.
+BETTER_AUTH_SECRET=<same as .env.production>
+ENCRYPTION_KEY=<same as .env.production>
 APP_HOST=app.omniscopedigital.com
 ACME_EMAIL=<email for Let's Encrypt notices>
 # Off-server backups to Cloudflare R2 (optional; leave empty to turn off)

@@ -21,7 +21,9 @@ export default defineConfig([
         {
           patterns: [
             {
-              // Features expose a public API through their index file.
+              // Features expose a public API through their index file. This applies inside
+              // src/features too: a feature uses relative imports ("./service") for its own
+              // files and "@/features/<other>" for another feature.
               group: ["@/features/*/*"],
               message: "Import from the feature's index (e.g. '@/features/pwa').",
             },
@@ -29,11 +31,6 @@ export default defineConfig([
         },
       ],
     },
-  },
-  {
-    // Inside a feature, relative imports between its own files are expected.
-    files: ["src/features/**"],
-    rules: { "no-restricted-imports": "off" },
   },
   {
     // Command-line entry points print progress.

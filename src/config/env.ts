@@ -33,13 +33,23 @@ const list = z
       .filter(Boolean),
   );
 
+/**
+ * Public development defaults for the two secrets. Anyone can read them in the
+ * repository, so a production server refuses to start with them (see
+ * `insecureSecrets`, checked in src/server/boot.ts).
+ */
+export const DEV_SECRETS = {
+  BETTER_AUTH_SECRET: "dev-only-secret-change-me-please-0000",
+  ENCRYPTION_KEY: "ZGV2LW9ubHktZW5jcnlwdGlvbi1rZXktMzItYnl0ZXM=",
+} as const;
+
 const serverSchema = z.object({
   /** Postgres connection string. */
   DATABASE_URL: z.string().default("postgres://omnisuite:omnisuite@localhost:5432/omnisuite"),
   /** Public base URL of the app (sign-in happens here). No trailing slash. */
   APP_URL: z.url().default("http://localhost:3000"),
   /** Better Auth signing secret (32+ random characters). */
-  BETTER_AUTH_SECRET: z.string().min(16).default("dev-only-secret-change-me-please-0000"),
+  BETTER_AUTH_SECRET: z.string().min(16).default(DEV_SECRETS.BETTER_AUTH_SECRET),
   GOOGLE_CLIENT_ID: z.string().default(""),
   GOOGLE_CLIENT_SECRET: z.string().default(""),
   /** Turns on email + password sign-in and sign-up. */
@@ -49,12 +59,17 @@ const serverSchema = z.object({
   /** Comma-separated emails with platform admin rights. */
   PLATFORM_ADMIN_EMAILS: list,
   /** 32-byte key (base64) for encrypting stored tokens. */
-  ENCRYPTION_KEY: z.string().default("ZGV2LW9ubHktZW5jcnlwdGlvbi1rZXktMzItYnl0ZXM="),
+  ENCRYPTION_KEY: z.string().default(DEV_SECRETS.ENCRYPTION_KEY),
   /** SMTP connection string. Mailpit locally: smtp://localhost:1025 */
   SMTP_URL: z.string().default("smtp://localhost:1025"),
   MAIL_FROM: z.string().default("OmniSuite <no-reply@localhost>"),
   /** Where uploaded files are stored on disk. */
   FILE_STORAGE_DIR: z.string().default("./storage"),
+  /**
+   * Trust X-Forwarded-Host for the request's host (only behind a proxy that
+   * rewrites Host and always sets this header). Caddy keeps Host: leave off.
+   */
+  TRUST_FORWARDED_HOST: bool,
   /** Hostname tenants point their custom domain at (CNAME target). */
   CUSTOM_DOMAIN_TARGET: z.string().default("tenants.localhost"),
   /** Run background jobs inside the web process. */
@@ -107,3 +122,22 @@ export const serverEnv = (): ServerEnv => {
   );
   return cached;
 };
+
+/**
+ * Names of secrets still set to their public development default on a server
+ * that is reachable from outside (production mode and an APP_URL that isn't a
+ * local host). Local `pnpm start` and the e2e run on localhost stay allowed.
+ */
+export function insecureSecrets(
+  env: Pick<ServerEnv, "APP_URL" | "BETTER_AUTH_SECRET" | "ENCRYPTION_KEY">,
+  nodeEnv: string = buildEnv.NODE_ENV,
+): string[] {
+  if (nodeEnv !== "production") return [];
+  const host = new URL(env.APP_URL).hostname;
+  if (host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host.endsWith(".localhost")) {
+    return [];
+  }
+  return (Object.keys(DEV_SECRETS) as (keyof typeof DEV_SECRETS)[]).filter(
+    (name) => env[name] === DEV_SECRETS[name],
+  );
+}

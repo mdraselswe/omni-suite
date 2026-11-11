@@ -9,9 +9,8 @@ import { formatDateTime } from "@/lib/dates";
 import { cn } from "@/lib/utils";
 import { requireTenantPermission } from "@/server/auth/session";
 import { db } from "@/server/db";
-import { EXPORT_SET_NAMES } from "@/server/export";
+import { exportableSets } from "@/server/export";
 import { googleConfigured } from "@/server/google";
-import { hasPermission } from "@/server/tenancy/context";
 
 export default async function BackupPage({ params, searchParams }: PageProps<"/[tenant]/settings/backup">) {
   const { tenant } = await params;
@@ -30,7 +29,8 @@ export default async function BackupPage({ params, searchParams }: PageProps<"/[
           ? t("backup.callbackFailed")
           : "";
   const when = (d: Date | null) => (d ? formatDateTime(d, timezone, locale) : t("backup.never"));
-  const canCsv = hasPermission(ctx, "finance.export", "all");
+  const csvSets = exportableSets(ctx);
+  const canCsv = csvSets.length > 0;
   const queue = queueBackupAction.bind(null, tenant);
   const link = "text-sm font-medium text-primary underline-offset-4 hover:underline";
 
@@ -136,7 +136,7 @@ export default async function BackupPage({ params, searchParams }: PageProps<"/[
           <div className="grid gap-2">
             <h3 className="text-sm font-medium">{t("backup.sets")}</h3>
             <ul className="flex flex-wrap gap-x-4 gap-y-2">
-              {EXPORT_SET_NAMES.map((set) => (
+              {csvSets.map((set) => (
                 <li key={set}>
                   <a
                     href={`/api/t/${encodeURIComponent(ctx.tenant.slug)}/export/${set}.csv`}

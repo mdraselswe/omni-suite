@@ -219,6 +219,40 @@ describe("xero sync", () => {
     expect(calls.map((c) => `${c.method} ${new URL(c.url).pathname}`)).toEqual([]);
   });
 
+  it("deletes a reversed payment in Xero once and never sends reversed payments", async () => {
+    const { syncXero } = await import("./service");
+    const { invoicePayments } = await import("@/server/db/schema");
+    const { eq } = await import("drizzle-orm");
+    const [first] = await database
+      .select()
+      .from(invoicePayments)
+      .where(eq(invoicePayments.tenantId, tenantId));
+    await database
+      .update(invoicePayments)
+      .set({ reversedAt: new Date() })
+      .where(eq(invoicePayments.id, first?.id ?? ""));
+    // A payment reversed before it ever reached Xero.
+    await database.insert(invoicePayments).values({
+      tenantId,
+      invoiceId: first?.invoiceId ?? "",
+      transactionId: "01890000-0000-7000-8000-000000000002",
+      amountMinor: 1000n,
+      date: "2026-11-06",
+      method: "bank",
+      reversedAt: new Date(),
+    });
+    const calls = mockXero({
+      "POST /Payments/p-1": () => ({ json: { Payments: [{ PaymentID: "p-1", Status: "DELETED" }] } }),
+    });
+    expect(await syncXero(database, tenantId)).toEqual({ contacts: 0, invoices: 0, payments: 1, errors: [] });
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(calls[0]?.body ?? "{}")).toEqual({ Status: "DELETED" });
+
+    calls.length = 0;
+    expect(await syncXero(database, tenantId)).toEqual({ contacts: 0, invoices: 0, payments: 0, errors: [] });
+    expect(calls).toEqual([]);
+  });
+
   it("keeps per-record errors and asks for a reconnect when the grant is gone", async () => {
     const { syncXero, getXeroConnection, forgetAccessToken, xeroDueForSync } = await import("./service");
     forgetAccessToken(tenantId);

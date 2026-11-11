@@ -15,6 +15,8 @@ export const BATCH_SIZE = 50;
 
 /** Stored in xero_connections.last_error when the grant is gone and the owner must reconnect. */
 export const RECONNECT_NEEDED = "reconnect-needed";
+/** Link hash of a payment that was reversed here and deleted in Xero. */
+export const PAYMENT_DELETED = "deleted";
 
 export type XeroSettings = { salesAccountCode: string; paymentAccountCode: string; taxType: string };
 

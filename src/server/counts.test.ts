@@ -17,14 +17,14 @@ beforeAll(async () => {
 
 describe("list counts", () => {
   it("counts each business's members on the platform admin list", async () => {
-    const { platformTenants } = await import("@/features/settings/service");
+    const { platformTenants } = await import("@/features/settings");
     const rows = await platformTenants(database);
     const members = Object.fromEntries(rows.map((r) => [r.tenant.slug, r.members]));
     expect(members).toEqual({ counts: 2, other: 1 });
   });
 
   it("counts a project's tasks and finished tasks", async () => {
-    const { createProject, createTask, listProjects } = await import("@/features/projects/service");
+    const { createProject, createTask, listProjects } = await import("@/features/projects");
     const status = owner.tenant.settings.projectStatuses[0]?.key ?? "";
     const projectId = await createProject(database, owner, {
       name: "Site",

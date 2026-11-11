@@ -554,6 +554,7 @@ nano .env
 ```
 
 2. উপরের চারটা `R2_*` লাইন আসল মান দিয়ে যোগ করুন, সেভ করুন।
+   - এই `.env`-এ `BETTER_AUTH_SECRET` আর `ENCRYPTION_KEY`-ও থাকতে হবে (`.env.production`-এর একই মান)। না থাকলে `docker compose` চালুই হবে না, আর development-এর default মান থাকলে অ্যাপ production-এ চালু হতে অস্বীকার করবে।
 3. ফাইলটা শুধু আপনি পড়তে পারবেন এমন করুন:
 
 ```bash

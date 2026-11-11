@@ -9,11 +9,16 @@ function transport(): Transporter {
   return globalForMail.__omnisuiteMail;
 }
 
+export type MailMessage = { to: string; subject: string; text: string; html?: string };
+
 /**
- * Sends an email. Failures are logged, never thrown: mail must not break the
- * action that triggered it (links are always shown in the app as well).
+ * Sends an email now. Failures are logged, never thrown: mail must not break the
+ * action that triggered it (links are always shown in the app as well). Inside a
+ * transaction use `queueMail` (src/server/shared.ts) instead, so mail only goes out
+ * after the commit and survives a restart. `messageId` lets a retried send reuse
+ * the same Message-ID, so mail servers can drop the duplicate.
  */
-export async function sendMail(message: { to: string; subject: string; text: string }): Promise<boolean> {
+export async function sendMail(message: MailMessage & { messageId?: string }): Promise<boolean> {
   try {
     await transport().sendMail({ from: serverEnv().MAIL_FROM, ...message });
     return true;

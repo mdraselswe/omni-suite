@@ -1,6 +1,10 @@
 import "server-only";
+import { eq } from "drizzle-orm";
 import type { DbOrTx } from "@/server/db";
-import { auditLogs, jobs, syncOutbox } from "@/server/db/schema";
+import { auditLogs, googleConnections, jobs, syncOutbox } from "@/server/db/schema";
+
+/** Changes within this window share one backup.sync job (bursts coalesce). */
+export const BACKUP_SYNC_DELAY_MS = 60_000;
 
 /** JSON-safe copy (bigint → string, Date → ISO) for audit data and exports. */
 export function toJsonSafe(value: unknown): unknown {
@@ -31,7 +35,10 @@ export async function audit(
 
 /**
  * Records that an entity changed so the backup worker mirrors it (ADR 0007),
- * and makes sure one sync job is pending for the tenant.
+ * and makes sure one sync job is pending for the tenant. The job runs a minute
+ * later, so a burst of writes is mirrored once. Tenants without a Google
+ * connection have nothing to mirror: no outbox row, no job (connecting runs a
+ * full sync anyway).
  */
 export async function markChanged(
   tx: DbOrTx,
@@ -40,9 +47,21 @@ export async function markChanged(
   entityId: string,
   op: "upsert" | "delete" = "upsert",
 ): Promise<void> {
+  const [connected] = await tx
+    .select({ id: googleConnections.id })
+    .from(googleConnections)
+    .where(eq(googleConnections.tenantId, tenantId))
+    .limit(1);
+  if (!connected) return;
   await tx.insert(syncOutbox).values({ tenantId, entity, entityId, op });
   await tx
     .insert(jobs)
-    .values({ type: "backup.sync", tenantId, dedupeKey: `backup.sync:${tenantId}`, payload: {} })
+    .values({
+      type: "backup.sync",
+      tenantId,
+      dedupeKey: `backup.sync:${tenantId}`,
+      payload: {},
+      runAt: new Date(Date.now() + BACKUP_SYNC_DELAY_MS),
+    })
     .onConflictDoNothing();
 }

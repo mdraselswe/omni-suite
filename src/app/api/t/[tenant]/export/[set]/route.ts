@@ -2,7 +2,16 @@ import { type NextRequest } from "next/server";
 import { today } from "@/lib/dates";
 import { actionContext } from "@/server/auth/session";
 import { db } from "@/server/db";
-import { EXPORT_SETS, exportRows, exportTenant, toCsv, toTable, type ExportSet } from "@/server/export";
+import {
+  EXPORT_PERMISSIONS,
+  EXPORT_SCOPE,
+  EXPORT_SETS,
+  exportRows,
+  exportTenant,
+  toCsv,
+  toTable,
+  type ExportSet,
+} from "@/server/export";
 import { ForbiddenError } from "@/server/tenancy/context";
 
 function isSet(name: string): name is ExportSet {
@@ -11,7 +20,8 @@ function isSet(name: string): name is ExportSet {
 
 /**
  * Downloads: /api/t/<tenant>/export/all.json (everything) or /<set>.csv.
- * Optional ?from=&to= filter rows that have a `date` column.
+ * Optional ?from=&to= filter rows that have a `date` column. Each CSV set needs
+ * its own permission with "all" scope (EXPORT_PERMISSIONS); the JSON needs backup.manage.
  */
 export async function GET(request: NextRequest, { params }: RouteContext<"/api/t/[tenant]/export/[set]">) {
   const { tenant, set } = await params;
@@ -29,7 +39,8 @@ export async function GET(request: NextRequest, { params }: RouteContext<"/api/t
     }
     const name = set.replace(/\.csv$/, "");
     if (!set.endsWith(".csv") || !isSet(name)) return new Response("Not found", { status: 404 });
-    const { ctx } = await actionContext(tenant, "finance.export", "all");
+    // Each set has its own guard (leads → leads.read, audit_log → audit.read, …).
+    const { ctx } = await actionContext(tenant, EXPORT_PERMISSIONS[name], EXPORT_SCOPE);
     const from = request.nextUrl.searchParams.get("from") ?? "";
     const to = request.nextUrl.searchParams.get("to") ?? "";
     let rows = await exportRows(db(), ctx.tenant.id, name);

@@ -1,5 +1,7 @@
 import "server-only";
 import { and, eq, inArray, isNull } from "drizzle-orm";
+import { site } from "@/config";
+import { t } from "@/i18n";
 import { today } from "@/lib/dates";
 import { parseTenantSettings } from "@/lib/tenant-settings";
 import { audit } from "@/server/audit";
@@ -89,9 +91,9 @@ async function prepare(database: DbOrTx, tenantId: string) {
       .select({ name: tenants.name })
       .from(tenants)
       .where(eq(tenants.id, tenantId));
-    const name = tenant?.name ?? "Business";
-    folderId ??= await createFolder(token, `OmniSuite backup – ${name}`);
-    spreadsheetId ??= await createSpreadsheet(token, `OmniSuite – ${name}`, folderId);
+    const vars = { app: site.name, name: tenant?.name ?? t("infra.backup.unnamed") };
+    folderId ??= await createFolder(token, t("infra.backup.folderName", vars));
+    spreadsheetId ??= await createSpreadsheet(token, t("infra.backup.sheetName", vars), folderId);
     await database
       .update(googleConnections)
       .set({ folderId, spreadsheetId })
@@ -134,9 +136,10 @@ export async function syncChanges(database: Database, tenantId: string): Promise
   const conn = await getConnection(database, tenantId);
   const ids = pending.map((p) => p.id);
   if (conn) {
+    // The audit log (up to 20,000 rows) is left to full syncs and the nightly snapshot.
     const sets = [...new Set(pending.flatMap((p) => ENTITY_SETS[p.entity] ?? []))];
     try {
-      await writeSets(database, tenantId, [...sets, "audit_log"]);
+      await writeSets(database, tenantId, sets);
       await recordResult(database, tenantId, { lastSyncedAt: new Date(), lastError: null });
     } catch (error) {
       await recordResult(database, tenantId, { lastError: String(error).slice(0, 1000) });
@@ -162,16 +165,20 @@ export async function fullSync(database: Database, tenantId: string): Promise<vo
   }
 }
 
-/** Nightly full JSON snapshot in the Drive folder; keeps the last 30. */
+/**
+ * Nightly full JSON snapshot in the Drive folder (keeps the last 30), and a
+ * refresh of the audit_log tab, which incremental syncs skip.
+ */
 export async function snapshot(database: Database, tenantId: string): Promise<void> {
-  const ready = await prepare(database, tenantId);
-  if (!ready) return;
-  const [tenant] = await database.select().from(tenants).where(eq(tenants.id, tenantId));
-  const day = today(parseTenantSettings(tenant?.settings).timezone);
-  const data = await exportTenant(database, tenantId);
   try {
+    const ready = await prepare(database, tenantId);
+    if (!ready) return;
+    const [tenant] = await database.select().from(tenants).where(eq(tenants.id, tenantId));
+    const day = today(parseTenantSettings(tenant?.settings).timezone);
+    const data = await exportTenant(database, tenantId);
     await uploadJson(ready.token, ready.folderId, `snapshot-${day}.json`, JSON.stringify(data));
     await pruneSnapshots(ready.token, ready.folderId, 30);
+    await writeSets(database, tenantId, ["audit_log"]);
     await recordResult(database, tenantId, { lastSnapshotAt: new Date(), lastError: null });
   } catch (error) {
     await recordResult(database, tenantId, { lastError: String(error).slice(0, 1000) });

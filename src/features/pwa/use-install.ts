@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import { installPlatform, type InstallPlatform } from "./platform";
 
 /** Chromium's install prompt event (not in the DOM typings). */
@@ -46,19 +46,20 @@ function snapshot(): InstallPlatform {
   });
 }
 
+/** Shows the browser's install prompt. Resolves true when the visitor accepts. */
+async function install(): Promise<boolean> {
+  const event = window.__installPrompt;
+  if (!event) return false;
+  await event.prompt();
+  const { outcome } = await event.userChoice;
+  window.__installPrompt = null;
+  window.dispatchEvent(new Event(PROMPT_READY_EVENT));
+  return outcome === "accepted";
+}
+
 /** The visitor's install situation, and the native prompt when the browser offers one. Null until mounted. */
 export function useInstall() {
   const platform = useSyncExternalStore<InstallPlatform | null>(subscribe, snapshot, () => null);
-
-  const install = useCallback(async () => {
-    const event = window.__installPrompt;
-    if (!event) return false;
-    await event.prompt();
-    const { outcome } = await event.userChoice;
-    window.__installPrompt = null;
-    window.dispatchEvent(new Event(PROMPT_READY_EVENT));
-    return outcome === "accepted";
-  }, []);
 
   return { platform, install };
 }

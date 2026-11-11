@@ -14,6 +14,7 @@ import {
   contactPayload,
   invoiceHash,
   invoicePayload,
+  PAYMENT_DELETED,
   paymentPayload,
   RECONNECT_NEEDED,
   shouldSyncInvoice,
@@ -320,16 +321,37 @@ export async function syncXero(database: Database, tenantId: string): Promise<Sy
       }
     }
 
-    /* Payments (Xero can't edit a payment, so each one is created once). */
+    /*
+     * Payments. Xero can't edit a payment, so each one is created once. A payment
+     * reversed here is never sent; one Xero already has is deleted there.
+     */
     const paymentLinks = await linksOf(database, tenantId, "payment");
     const currencyOf = new Map(rows.map((inv) => [inv.id, inv.currency]));
     const payments = await database
       .select()
       .from(invoicePayments)
       .where(eq(invoicePayments.tenantId, tenantId));
+    for (const p of payments) {
+      const link = paymentLinks.get(p.id);
+      if (!p.reversedAt || !link || link.hash === PAYMENT_DELETED) continue;
+      const res = await api<{ Payments?: ItemResult[] }>(
+        "POST",
+        `/Payments/${encodeURIComponent(link.xeroId)}`,
+        {
+          Status: "DELETED",
+        },
+      );
+      const error = itemError(res.Payments?.[0]);
+      if (error) {
+        result.errors.push(`Payment ${p.date} (reversed): ${error}`);
+        continue;
+      }
+      await saveLink(database, tenantId, "payment", p.id, link.xeroId, PAYMENT_DELETED);
+      result.payments++;
+    }
     const pendingPayments: { paymentId: string; payload: XeroPayment }[] = [];
     for (const p of payments) {
-      if (paymentLinks.has(p.id)) continue;
+      if (p.reversedAt || paymentLinks.has(p.id)) continue;
       const xeroInvoiceId = invoiceLinks.get(p.invoiceId)?.xeroId;
       const currency = currencyOf.get(p.invoiceId);
       if (!xeroInvoiceId || !currency) continue;

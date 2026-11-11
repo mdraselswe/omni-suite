@@ -11,7 +11,8 @@ import {
   tenantCounters,
   user,
 } from "@/server/db/schema";
-import { sendMail } from "@/server/mail";
+import { enqueue } from "@/server/jobs/queue";
+import { appUrl, type MailMessage } from "@/server/mail";
 
 /** Next value of a per-tenant counter (invoice and proposal numbers). Safe under concurrency. */
 export async function nextCounter(tx: DbOrTx, tenantId: string, key: string): Promise<number> {
@@ -25,6 +26,35 @@ export async function nextCounter(tx: DbOrTx, tenantId: string, key: string): Pr
     .returning({ value: tenantCounters.value });
   if (!row) throw new Error("Counter failed");
   return row.value;
+}
+
+/** App-relative links ("/acme/invoices/…") as absolute URLs: whole-line paths in text, href="/…" in HTML. */
+export function absoluteLinks(mail: MailMessage): MailMessage {
+  const html = mail.html?.replace(
+    /(href=["'])(\/(?!\/)[^"']*)/g,
+    (_match, attr: string, path: string) => attr + appUrl(path),
+  );
+  return {
+    ...mail,
+    text: mail.text.replace(/^\/(?!\/)\S*$/gm, (path) => appUrl(path)),
+    ...(html === undefined ? {} : { html }),
+  };
+}
+
+/** Job type that delivers one queued email (handler in src/server/jobs/handlers.ts). */
+export const MAIL_JOB = "mail.send";
+
+/**
+ * Queues an email as a job in the same transaction: it is sent only if the
+ * transaction commits, and retried if SMTP fails or the server restarts.
+ * App-relative links ("/acme/…" on their own line, or href="/…") become absolute URLs.
+ */
+export async function queueMail(
+  tx: DbOrTx,
+  mail: { to: string; subject: string; text: string; html?: string },
+): Promise<void> {
+  const payload: MailMessage = absoluteLinks(mail);
+  await enqueue(tx, { type: MAIL_JOB, payload });
 }
 
 /** In-app notifications (and optionally an email) for a list of users. */
@@ -47,12 +77,14 @@ export async function notify(
   );
   if (message.email) {
     const recipients = await tx.select({ email: user.email }).from(user).where(inArray(user.id, ids));
-    // Fire and forget: mail never blocks the action.
+    const link = message.link?.startsWith("/") ? appUrl(message.link) : (message.link ?? "");
     for (const r of recipients) {
-      void sendMail({
+      await queueMail(tx, {
         to: r.email,
         subject: message.title,
-        text: `${message.body ?? ""}\n\n${message.link ?? ""}`.trim(),
+        text: `${message.body ?? ""}
+
+${link}`.trim(),
       });
     }
   }

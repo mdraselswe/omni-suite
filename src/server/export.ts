@@ -4,6 +4,7 @@ import type { PgTable } from "drizzle-orm/pg-core";
 import { toJsonSafe } from "@/server/audit";
 import type { DbOrTx } from "@/server/db";
 import * as s from "@/server/db/schema";
+import { hasPermission, type TenantContext } from "@/server/tenancy/context";
 
 /**
  * Tenant data sets for backups and exports (ADR 0007). Each has a tenant_id
@@ -37,6 +38,51 @@ export const EXPORT_SETS = {
 
 export type ExportSet = keyof typeof EXPORT_SETS;
 export const EXPORT_SET_NAMES = Object.keys(EXPORT_SETS) as ExportSet[];
+
+/**
+ * The permission that guards each CSV set. A set holds every row of the tenant,
+ * so the member needs it with "all" scope (someone limited to their own or
+ * assigned rows can't download everyone's). Finance ledgers need finance.export.
+ * The full JSON export needs backup.manage.
+ */
+export const EXPORT_PERMISSIONS: Record<ExportSet, string> = {
+  clients: "clients.read",
+  leads: "leads.read",
+  onboarding: "onboarding.manage",
+  proposals: "proposals.read",
+  invoices: "invoices.read",
+  invoice_payments: "finance.export",
+  recurring_invoices: "invoices.read",
+  accounts: "finance.export",
+  categories: "finance.export",
+  transactions: "finance.export",
+  periods: "finance.export",
+  partners: "partners.read",
+  capital: "partners.read",
+  ownership_events: "partners.read",
+  ownership_periods: "partners.read",
+  profit_rules: "partners.read",
+  distributions: "partners.read",
+  projects: "projects.read",
+  tasks: "projects.read",
+  time_entries: "time.read",
+  files: "files.read",
+  custom_fields: "settings.manage",
+  audit_log: "audit.read",
+};
+
+/** Scope a member must hold for a set's permission to download it. */
+export const EXPORT_SCOPE = "all" as const;
+
+/** Whether the member may download this CSV set. */
+export function canExportSet(ctx: TenantContext, set: ExportSet): boolean {
+  return hasPermission(ctx, EXPORT_PERMISSIONS[set], EXPORT_SCOPE);
+}
+
+/** The CSV sets this member may download (for the export list). */
+export function exportableSets(ctx: TenantContext): ExportSet[] {
+  return EXPORT_SET_NAMES.filter((set) => canExportSet(ctx, set));
+}
 
 /** Which sheet tabs an outbox entity change affects. */
 export const ENTITY_SETS: Record<string, ExportSet[]> = {

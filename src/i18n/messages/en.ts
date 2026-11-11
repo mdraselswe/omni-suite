@@ -1,13 +1,16 @@
+import { enAccount } from "./en-account";
 import { enAdmin } from "./en-admin";
 import { enAi } from "./en-ai";
 import { enApp } from "./en-app";
 import { enCore } from "./en-core";
+import { enInfra } from "./en-infra";
 import { enMoney } from "./en-money";
 import { enPayments } from "./en-payments";
 import { enUi1 } from "./en-ui-1";
 import { enUi2 } from "./en-ui-2";
 import { enUi3 } from "./en-ui-3";
 import { enWork } from "./en-work";
+import { enWork2 } from "./en-work-2";
 import { enXero } from "./en-xero";
 
 /**
@@ -27,6 +30,9 @@ export const en = {
   ...enPayments,
   ...enXero,
   ...enAi,
+  ...enInfra,
+  ...enAccount,
+  ...enWork2,
   "a11y.skip": "Skip to content",
   "nav.home": "Home",
   "nav.about": "About",

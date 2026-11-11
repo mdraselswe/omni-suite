@@ -161,6 +161,25 @@ export async function userTenants(database: DbOrTx, userId: string) {
     .orderBy(tenants.name);
 }
 
+/** A tenants row as the request context's tenant (settings parsed). */
+export function tenantFromRow(row: typeof tenants.$inferSelect): TenantContext["tenant"] {
+  return {
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    status: row.status,
+    plan: row.plan,
+    settings: parseTenantSettings(row.settings),
+  };
+}
+
+/** The context tenant for jobs and webhooks (no signed-in user). Throws when it doesn't exist. */
+export async function loadTenant(database: DbOrTx, tenantId: string): Promise<TenantContext["tenant"]> {
+  const [row] = await database.select().from(tenants).where(eq(tenants.id, tenantId));
+  if (!row) throw new Error("Tenant not found");
+  return tenantFromRow(row);
+}
+
 export type ContextResult =
   { ok: true; ctx: TenantContext } | { ok: false; reason: "no-tenant" | "no-membership" | "suspended" };
 
@@ -185,14 +204,7 @@ export async function buildTenantContext(
   return {
     ok: true,
     ctx: {
-      tenant: {
-        id: row.tenant.id,
-        slug: row.tenant.slug,
-        name: row.tenant.name,
-        status: row.tenant.status,
-        plan: row.tenant.plan,
-        settings: parseTenantSettings(row.tenant.settings),
-      },
+      tenant: tenantFromRow(row.tenant),
       user: { id: row.user.id, name: row.user.name, email: row.user.email, image: row.user.image },
       membership: {
         id: row.membership.id,

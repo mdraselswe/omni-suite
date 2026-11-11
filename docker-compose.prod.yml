@@ -22,6 +22,10 @@ services:
     env_file: .env.production
     environment:
       DATABASE_URL: postgres://omnisuite:${POSTGRES_PASSWORD}@postgres:5432/omnisuite
+      # Required: compose refuses to start without them (put them in the .env next to this
+      # file, same values as .env.production). The app also refuses the public dev defaults.
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET (32+ random characters)}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY (32 random bytes, base64)}
     depends_on:
       postgres:
         condition: service_healthy

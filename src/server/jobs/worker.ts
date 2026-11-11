@@ -30,14 +30,18 @@ export function startWorker(): void {
     }
   };
 
-  const schedule = async () => {
+  // Each step on its own, so one failing step never skips the others.
+  const step = async (name: string, run: () => Promise<void>) => {
     try {
-      await recoverStaleJobs(db());
-      await scheduleRecurring(db(), new Date());
-      await pruneJobs(db());
+      await run();
     } catch (error) {
-      console.error("[jobs] scheduler error", error);
+      console.error(`[jobs] scheduler step "${name}" failed`, error);
     }
+  };
+  const schedule = async () => {
+    await step("recover", () => recoverStaleJobs(db()));
+    await step("schedule", () => scheduleRecurring(db(), new Date()));
+    await step("prune", () => pruneJobs(db()));
   };
 
   setInterval(() => void drain(), POLL_MS).unref();
