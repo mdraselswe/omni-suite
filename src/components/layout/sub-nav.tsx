@@ -9,7 +9,10 @@ import { cn } from "@/lib/utils";
 export function SubNav({ items }: { items: readonly { href: Route; label: string; exact?: boolean }[] }) {
   const pathname = usePathname().replace(/\/$/, "");
   return (
-    <nav aria-label="Section" className="-mx-1 mb-6 flex gap-1 overflow-x-auto border-b px-1">
+    <nav
+      aria-label="Section"
+      className="mb-6 flex w-fit max-w-full [scrollbar-width:none] gap-1 overflow-x-auto surface p-1"
+    >
       {items.map((item) => {
         const href = item.href.replace(/\/$/, "");
         const active = item.exact ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
@@ -19,8 +22,9 @@ export function SubNav({ items }: { items: readonly { href: Route; label: string
             href={item.href}
             aria-current={active ? "page" : undefined}
             className={cn(
-              "-mb-px shrink-0 border-b-2 border-transparent px-3 py-2 text-sm text-muted-foreground hover:text-foreground",
-              active && "border-primary font-medium text-foreground",
+              "shrink-0 rounded-[calc(var(--radius)-0.25rem)] px-4 py-2 text-sm text-muted-foreground outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring",
+              active &&
+                "bg-primary font-medium text-primary-foreground shadow-sm hover:bg-primary hover:text-primary-foreground",
             )}
           >
             {item.label}

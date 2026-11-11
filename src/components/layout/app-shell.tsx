@@ -1,60 +1,73 @@
 import type { ReactNode } from "react";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
+import type { SidebarStyle } from "@/config";
+import { BrandMark } from "./brand-mark";
+import { CommandMenu } from "./command-menu";
 import { MobileNav } from "./mobile-nav";
+import { ShellFrame, SidebarToggle } from "./shell-frame";
 import { SidebarNav, type ShellNavItem } from "./sidebar-nav";
 import { UserMenu, type MenuTenant } from "./user-menu";
 
-/** Signed-in layout: sidebar on desktop, sheet menu on mobile. */
+/** Signed-in layout: sectioned sidebar (collapsible) on desktop, sheet menu on mobile, header with search. */
 export function AppShell({
   title,
   subtitle,
+  logoUrl,
   nav,
   user,
   tenants,
   isPlatformAdmin,
   notifications,
+  sidebarStyle,
+  collapsed,
   children,
 }: {
   title: string;
   subtitle?: string;
+  logoUrl?: string;
   nav: readonly ShellNavItem[];
   user: { name: string; email: string; image: string | null };
   tenants: readonly MenuTenant[];
   isPlatformAdmin: boolean;
   /** Optional header slot (the notification bell). */
   notifications?: ReactNode;
+  sidebarStyle: SidebarStyle;
+  collapsed: boolean;
   children: ReactNode;
 }) {
-  const userMenu = <UserMenu user={user} tenants={tenants} isPlatformAdmin={isPlatformAdmin} />;
+  const brand = (
+    <div className="flex h-20 shrink-0 items-center gap-3 px-5 group-data-[collapsed=true]/shell:justify-center group-data-[collapsed=true]/shell:px-0">
+      <BrandMark name={title} logoUrl={logoUrl} />
+      <div className="grid min-w-0 group-data-[collapsed=true]/shell:sr-only">
+        <p className="truncate font-heading text-base font-semibold">{title}</p>
+        {subtitle ? <p className="truncate text-xs text-sidebar-muted">{subtitle}</p> : null}
+      </div>
+    </div>
+  );
+
   return (
-    <div className="flex min-h-svh">
-      <aside className="sticky top-0 hidden h-svh w-60 shrink-0 flex-col gap-4 border-r bg-sidebar p-3 md:flex print:hidden">
-        <div className="flex items-start gap-1 pt-1 pl-2">
-          <div className="min-w-0 flex-1">
-            <p className="truncate font-heading text-base font-semibold">{title}</p>
-            {subtitle ? <p className="truncate text-xs text-muted-foreground">{subtitle}</p> : null}
-          </div>
-          {notifications}
-        </div>
-        <div className="flex-1 overflow-y-auto">
+    <ShellFrame initialCollapsed={collapsed} sidebarStyle={sidebarStyle}>
+      <aside className="sticky top-0 z-40 hidden h-svh w-64 shrink-0 flex-col bg-sidebar text-sidebar-foreground shadow-[var(--sidebar-shadow)] group-data-[collapsed=true]/shell:w-20 md:flex print:hidden">
+        {brand}
+        <div className="flex-1 overflow-y-auto pt-2 pb-6">
           <SidebarNav items={nav} />
-        </div>
-        <div className="flex items-center gap-1 border-t pt-3">
-          <div className="min-w-0 flex-1">{userMenu}</div>
-          <ThemeToggle />
         </div>
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b bg-background/90 px-4 backdrop-blur md:hidden print:hidden">
-          <MobileNav items={nav} title={title} footer={<div className="border-t pt-3">{userMenu}</div>} />
-          <p className="flex-1 truncate font-heading font-semibold">{title}</p>
-          {notifications}
-          <ThemeToggle />
+        <header className="sticky top-0 z-30 flex h-16 items-center gap-2 bg-background/85 px-4 backdrop-blur-md sm:gap-3 md:h-20 md:px-8 print:hidden">
+          <MobileNav items={nav} brand={brand} />
+          <SidebarToggle />
+          <CommandMenu items={nav} />
+          <div className="ml-auto flex items-center gap-2 sm:gap-3">
+            {notifications}
+            <ThemeToggle />
+            <UserMenu user={user} tenants={tenants} isPlatformAdmin={isPlatformAdmin} />
+          </div>
         </header>
-        <main id="content" className="flex-1 px-4 py-6 md:px-8 md:py-8 print:p-0">
+        <main id="content" className="flex-1 px-4 pt-2 pb-10 md:px-8 print:p-0">
           {children}
         </main>
       </div>
-    </div>
+    </ShellFrame>
   );
 }

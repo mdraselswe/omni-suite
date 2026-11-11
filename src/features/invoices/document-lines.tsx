@@ -33,7 +33,7 @@ export function DocumentLines({
   const money = (m: bigint) => formatMoney(m, currency, locale);
   const { lineAmounts } = computeTotals([...items], pricesIncludeTax);
   return (
-    <Table>
+    <Table bare>
       <TableHeader>
         <TableRow>
           <TableHead>{t("items.description")}</TableHead>

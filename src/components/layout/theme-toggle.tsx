@@ -13,7 +13,14 @@ export function ThemeToggle() {
   const Icon = ICONS[mode];
   const label = t(`theme.${mode}`);
   return (
-    <Button variant="ghost" size="icon" onClick={cycle} aria-label={label} title={label}>
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={cycle}
+      aria-label={label}
+      title={label}
+      className="size-10 rounded-full header-control"
+    >
       <Icon aria-hidden="true" />
     </Button>
   );

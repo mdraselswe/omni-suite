@@ -5,29 +5,37 @@ import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { t } from "@/i18n";
+import { useShell } from "./shell-frame";
 import { SidebarNav, type ShellNavItem } from "./sidebar-nav";
 
-export function MobileNav({
-  items,
-  title,
-  footer,
-}: {
-  items: readonly ShellNavItem[];
-  title: string;
-  footer?: ReactNode;
-}) {
+/** Phone and tablet menu: the sidebar in a sheet. */
+export function MobileNav({ items, brand }: { items: readonly ShellNavItem[]; brand: ReactNode }) {
   const [open, setOpen] = useState(false);
+  const { sidebarStyle } = useShell();
   return (
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger
-        render={<Button variant="ghost" size="icon" className="md:hidden" aria-label={t("nav.menu")} />}
+        render={
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-10 rounded-full header-control md:hidden"
+            aria-label={t("nav.menu")}
+          />
+        }
       >
         <Menu aria-hidden="true" />
       </SheetTrigger>
-      <SheetContent side="left" className="w-72 gap-4 p-4">
-        <SheetTitle className="text-base">{title}</SheetTitle>
-        <SidebarNav items={items} onNavigate={() => setOpen(false)} />
-        {footer}
+      <SheetContent
+        side="left"
+        data-sidebar={sidebarStyle}
+        className="w-72 gap-0 bg-sidebar p-0 text-sidebar-foreground"
+      >
+        <SheetTitle className="sr-only">{t("nav.menu")}</SheetTitle>
+        {brand}
+        <div className="overflow-y-auto pt-2 pb-6">
+          <SidebarNav items={items} onNavigate={() => setOpen(false)} collapsible={false} />
+        </div>
       </SheetContent>
     </Sheet>
   );

@@ -1,20 +1,22 @@
 import { Badge } from "@/components/ui/badge";
 
-const TONE: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
+type Tone = "default" | "success" | "warning" | "info" | "soft" | "destructive" | "outline";
+
+const TONE: Record<string, Tone> = {
   active: "default",
-  paid: "default",
-  accepted: "default",
-  done: "default",
-  completed: "default",
-  final: "default",
-  won: "default",
-  approved: "default",
-  sent: "secondary",
-  submitted: "secondary",
-  partially_paid: "secondary",
-  proposed: "secondary",
-  in_progress: "secondary",
-  review: "secondary",
+  paid: "success",
+  accepted: "success",
+  done: "success",
+  completed: "success",
+  final: "success",
+  won: "success",
+  approved: "success",
+  sent: "info",
+  submitted: "info",
+  partially_paid: "warning",
+  proposed: "soft",
+  in_progress: "info",
+  review: "warning",
   draft: "outline",
   todo: "outline",
   planning: "outline",

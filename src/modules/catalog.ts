@@ -56,7 +56,12 @@ export type NavItem = {
   /** Shown when the member holds this permission (any scope). */
   permission: string;
   area: "team" | "portal";
+  /** Sidebar section the entry is listed under. */
+  group: NavGroup;
 };
+
+export const NAV_GROUPS = ["overview", "money", "sales", "work", "admin"] as const;
+export type NavGroup = (typeof NAV_GROUPS)[number];
 
 export type ModuleDef = {
   key: string;
@@ -104,7 +109,14 @@ export const MODULES: readonly ModuleDef[] = [
       }),
     ],
     nav: [
-      { path: "", label: "nav.dashboard", icon: "dashboard", permission: "dashboard.read", area: "team" },
+      {
+        path: "",
+        group: "overview",
+        label: "nav.dashboard",
+        icon: "dashboard",
+        permission: "dashboard.read",
+        area: "team",
+      },
     ],
   },
   {
@@ -118,7 +130,14 @@ export const MODULES: readonly ModuleDef[] = [
       internal("finance.export", "perm.finance.export", { ...owners, accountant: "all" }),
     ],
     nav: [
-      { path: "finance", label: "nav.finance", icon: "wallet", permission: "finance.read", area: "team" },
+      {
+        path: "finance",
+        group: "money",
+        label: "nav.finance",
+        icon: "wallet",
+        permission: "finance.read",
+        area: "team",
+      },
     ],
   },
   {
@@ -134,6 +153,7 @@ export const MODULES: readonly ModuleDef[] = [
     nav: [
       {
         path: "partners",
+        group: "money",
         label: "nav.partners",
         icon: "handshake",
         permission: "partners.read",
@@ -149,7 +169,16 @@ export const MODULES: readonly ModuleDef[] = [
       internal("leads.read", "perm.leads.read", { ...owners, manager: "all" }, ROWS),
       internal("leads.write", "perm.leads.write", { ...owners, manager: "all" }, ROWS),
     ],
-    nav: [{ path: "leads", label: "nav.leads", icon: "target", permission: "leads.read", area: "team" }],
+    nav: [
+      {
+        path: "leads",
+        group: "sales",
+        label: "nav.leads",
+        icon: "target",
+        permission: "leads.read",
+        area: "team",
+      },
+    ],
   },
   {
     key: "clients",
@@ -166,7 +195,14 @@ export const MODULES: readonly ModuleDef[] = [
       internal("onboarding.manage", "perm.onboarding.manage", { ...owners, manager: "all" }),
     ],
     nav: [
-      { path: "clients", label: "nav.clients", icon: "contact", permission: "clients.read", area: "team" },
+      {
+        path: "clients",
+        group: "sales",
+        label: "nav.clients",
+        icon: "contact",
+        permission: "clients.read",
+        area: "team",
+      },
     ],
   },
   {
@@ -180,6 +216,7 @@ export const MODULES: readonly ModuleDef[] = [
     nav: [
       {
         path: "proposals",
+        group: "sales",
         label: "nav.proposals",
         icon: "file-text",
         permission: "proposals.read",
@@ -197,7 +234,14 @@ export const MODULES: readonly ModuleDef[] = [
       internal("payments.record", "perm.payments.record", { ...owners, accountant: "all" }),
     ],
     nav: [
-      { path: "invoices", label: "nav.invoices", icon: "receipt", permission: "invoices.read", area: "team" },
+      {
+        path: "invoices",
+        group: "sales",
+        label: "nav.invoices",
+        icon: "receipt",
+        permission: "invoices.read",
+        area: "team",
+      },
     ],
   },
   {
@@ -217,8 +261,22 @@ export const MODULES: readonly ModuleDef[] = [
       internal("time.write", "perm.time.write", { ...owners, manager: "all", staff: "own" }, ROWS),
     ],
     nav: [
-      { path: "projects", label: "nav.projects", icon: "folder", permission: "projects.read", area: "team" },
-      { path: "time", label: "nav.time", icon: "clock", permission: "time.read", area: "team" },
+      {
+        path: "projects",
+        group: "work",
+        label: "nav.projects",
+        icon: "folder",
+        permission: "projects.read",
+        area: "team",
+      },
+      {
+        path: "time",
+        group: "work",
+        label: "nav.time",
+        icon: "clock",
+        permission: "time.read",
+        area: "team",
+      },
     ],
   },
   {
@@ -234,7 +292,16 @@ export const MODULES: readonly ModuleDef[] = [
       ),
       internal("files.write", "perm.files.write", { ...owners, manager: "all", staff: "assigned" }, ROWS),
     ],
-    nav: [{ path: "files", label: "nav.files", icon: "paperclip", permission: "files.read", area: "team" }],
+    nav: [
+      {
+        path: "files",
+        group: "work",
+        label: "nav.files",
+        icon: "paperclip",
+        permission: "files.read",
+        area: "team",
+      },
+    ],
   },
   {
     key: "team",
@@ -246,7 +313,16 @@ export const MODULES: readonly ModuleDef[] = [
       internal("members.manage", "perm.members.manage", { ...owners }),
       internal("roles.manage", "perm.roles.manage", { owner: "all" }),
     ],
-    nav: [{ path: "team", label: "nav.team", icon: "users", permission: "members.read", area: "team" }],
+    nav: [
+      {
+        path: "team",
+        group: "admin",
+        label: "nav.team",
+        icon: "users",
+        permission: "members.read",
+        area: "team",
+      },
+    ],
   },
   {
     key: "settings",
@@ -259,9 +335,17 @@ export const MODULES: readonly ModuleDef[] = [
       internal("domains.manage", "perm.domains.manage", { owner: "all" }),
     ],
     nav: [
-      { path: "audit", label: "nav.audit", icon: "history", permission: "audit.read", area: "team" },
+      {
+        path: "audit",
+        group: "admin",
+        label: "nav.audit",
+        icon: "history",
+        permission: "audit.read",
+        area: "team",
+      },
       {
         path: "settings",
+        group: "admin",
         label: "nav.settings",
         icon: "settings",
         permission: "settings.manage",
@@ -285,6 +369,7 @@ export const MODULES: readonly ModuleDef[] = [
     nav: [
       {
         path: "portal",
+        group: "overview",
         label: "nav.portal.home",
         icon: "dashboard",
         permission: "portal.access",
@@ -292,6 +377,7 @@ export const MODULES: readonly ModuleDef[] = [
       },
       {
         path: "portal/projects",
+        group: "work",
         label: "nav.portal.projects",
         icon: "folder",
         permission: "portal.projects",
@@ -299,6 +385,7 @@ export const MODULES: readonly ModuleDef[] = [
       },
       {
         path: "portal/invoices",
+        group: "money",
         label: "nav.portal.invoices",
         icon: "receipt",
         permission: "portal.invoices",
@@ -306,6 +393,7 @@ export const MODULES: readonly ModuleDef[] = [
       },
       {
         path: "portal/proposals",
+        group: "sales",
         label: "nav.portal.proposals",
         icon: "file-text",
         permission: "portal.proposals",
@@ -313,6 +401,7 @@ export const MODULES: readonly ModuleDef[] = [
       },
       {
         path: "portal/files",
+        group: "work",
         label: "nav.portal.files",
         icon: "paperclip",
         permission: "portal.files",
@@ -320,6 +409,7 @@ export const MODULES: readonly ModuleDef[] = [
       },
       {
         path: "portal/onboarding",
+        group: "work",
         label: "nav.portal.onboarding",
         icon: "clipboard",
         permission: "portal.onboarding",

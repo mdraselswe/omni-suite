@@ -1,5 +1,6 @@
 "use client";
 
+import { Eye, EyeOff } from "lucide-react";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
@@ -53,6 +54,7 @@ export function LoginForm({
   const router = useRouter();
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [busy, setBusy] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const done = () => {
     router.push(next as Route);
     router.refresh();
@@ -87,6 +89,7 @@ export function LoginForm({
         <Button
           variant="outline"
           size="lg"
+          className="h-11 w-full"
           disabled={busy}
           onClick={() => authClient.signIn.social({ provider: "google", callbackURL: next })}
         >
@@ -98,41 +101,55 @@ export function LoginForm({
       {emailPassword ? (
         <>
           {google ? (
-            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            <div className="flex items-center gap-3 text-xs text-muted-foreground uppercase">
               <Separator className="flex-1" />
               {t("auth.or")}
               <Separator className="flex-1" />
             </div>
           ) : null}
-          <form onSubmit={submit} method="post" className="grid gap-3">
+          <form onSubmit={submit} method="post" className="grid gap-4">
             {mode === "signup" ? (
               <div className="grid gap-1.5">
                 <Label htmlFor="name">{t("auth.name")}</Label>
-                <Input id="name" name="name" autoComplete="name" required />
+                <Input id="name" name="name" autoComplete="name" className="h-11" required />
               </div>
             ) : null}
             <div className="grid gap-1.5">
               <Label htmlFor="email">{t("auth.email")}</Label>
-              <Input id="email" name="email" type="email" autoComplete="email" required />
+              <Input id="email" name="email" type="email" autoComplete="email" className="h-11" required />
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="password">{t("auth.password")}</Label>
-              <Input
-                id="password"
-                name="password"
-                type="password"
-                minLength={10}
-                autoComplete={mode === "signin" ? "current-password" : "new-password"}
-                required
-              />
+              <div className="relative">
+                <Input
+                  id="password"
+                  name="password"
+                  type={showPassword ? "text" : "password"}
+                  minLength={10}
+                  autoComplete={mode === "signin" ? "current-password" : "new-password"}
+                  className="h-11 pr-11"
+                  required
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="absolute top-1.5 right-1.5 text-muted-foreground"
+                  aria-label={showPassword ? t("auth.hidePassword") : t("auth.showPassword")}
+                  aria-pressed={showPassword}
+                  onClick={() => setShowPassword(!showPassword)}
+                >
+                  {showPassword ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
+                </Button>
+              </div>
             </div>
-            <Button type="submit" size="lg" disabled={busy}>
+            <Button type="submit" size="lg" className="mt-1 h-11 w-full" disabled={busy}>
               {mode === "signin" ? t("auth.signIn") : t("auth.signUp")}
             </Button>
           </form>
           <button
             type="button"
-            className="text-sm text-muted-foreground underline-offset-4 hover:underline"
+            className="justify-self-start rounded-sm text-sm text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
             onClick={() => setMode(mode === "signin" ? "signup" : "signin")}
           >
             {mode === "signin" ? t("auth.toSignUp") : t("auth.toSignIn")}
@@ -145,7 +162,7 @@ export function LoginForm({
       ) : null}
 
       {demoAccounts.length > 0 ? (
-        <div className="grid gap-2 rounded-lg border border-dashed p-3">
+        <div className="mt-2 grid gap-2 rounded-xl border border-dashed p-4">
           <p className="text-xs font-medium text-muted-foreground">{t("auth.demoTitle")}</p>
           <div className="grid gap-1.5 sm:grid-cols-2">
             {demoAccounts.map((a) => (

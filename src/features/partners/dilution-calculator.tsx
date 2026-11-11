@@ -37,7 +37,7 @@ export function DilutionCalculator({
   const names = new Map(holdings.map((h) => [h.partnerId, h.name]));
 
   return (
-    <div className="grid gap-4 rounded-lg border p-4">
+    <div className="grid gap-4 surface p-5">
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="grid gap-1.5">
           <Label htmlFor="calc-pre">{t("partners.preMoney")}</Label>

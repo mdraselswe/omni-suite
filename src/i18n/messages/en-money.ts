@@ -4,6 +4,17 @@
 export const enMoney = {
   // Dashboard
   "dash.title": "Dashboard",
+  "dash.greeting": "Welcome back, {name}",
+  "dash.overview": "Income & spending",
+  "dash.overviewSub": "Last {months} months",
+  "dash.range": "Chart period",
+  "dash.range6": "6 months",
+  "dash.range12": "12 months",
+  "dash.projects": "Projects in progress",
+  "dash.noProjects": "No projects in progress.",
+  "dash.tasksDone": "{done} of {total} tasks done",
+  "dash.progress": "{name}: {percent}% done",
+  "dash.noTasksYet": "No tasks yet",
   "dash.sub": "Where the business stands today.",
   "dash.cash": "Cash on hand",
   "dash.cashHint": "All accounts",

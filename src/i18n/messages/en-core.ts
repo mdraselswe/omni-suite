@@ -47,6 +47,14 @@ export const enCore = {
 
   // Sign-in
   "auth.title": "Sign in",
+  "auth.panelTitle": "Your whole business in one calm place",
+  "auth.panelSub": "Money, partners, clients and projects, with profit sharing every partner signs off on.",
+  "auth.point.secure": "Private to your business",
+  "auth.point.backup": "Backed up to Google Drive",
+  "auth.point.portal": "Client portal included",
+  "auth.showPassword": "Show password",
+  "auth.hidePassword": "Hide password",
+  "auth.copyright": "© {year} {name}",
   "auth.sub": "Run your business: money, partners, clients and projects.",
   "auth.google": "Continue with Google",
   "auth.or": "or",
@@ -94,6 +102,17 @@ export const enCore = {
 
   // Shell
   "shell.businesses": "Businesses",
+  "shell.account": "Account menu",
+  "shell.search": "Search pages",
+  "shell.searchPlaceholder": "Type a page name…",
+  "shell.noResults": "No pages match.",
+  "shell.collapse": "Collapse menu",
+  "shell.expand": "Expand menu",
+  "nav.group.overview": "Overview",
+  "nav.group.money": "Money",
+  "nav.group.sales": "Sales",
+  "nav.group.work": "Work",
+  "nav.group.admin": "Admin",
   "shell.newBusiness": "New business",
   "shell.platformAdmin": "Platform admin",
   "shell.signOut": "Sign out",

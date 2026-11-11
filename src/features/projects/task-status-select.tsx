@@ -32,7 +32,7 @@ export function TaskStatusSelect({
         defaultValue={status}
         disabled={pending}
         onChange={(e) => e.currentTarget.form?.requestSubmit()}
-        className="h-8 rounded-md border border-input bg-transparent px-2 text-xs dark:bg-input/30"
+        className="h-8 rounded-md border border-input bg-card px-2 text-xs dark:bg-input/30"
       >
         {STATUSES.map((s) => (
           <option key={s} value={s}>

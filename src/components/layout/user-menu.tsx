@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronsUpDown, LogOut, Plus, Shield } from "lucide-react";
+import { Check, LogOut, Plus, Shield } from "lucide-react";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -16,17 +16,9 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { t } from "@/i18n";
 import { authClient } from "@/lib/auth-client";
+import { initials } from "@/lib/shell";
 
 export type MenuTenant = { slug: string; name: string; current: boolean };
-
-function initials(name: string) {
-  return name
-    .split(/\s+/)
-    .map((p) => p[0] ?? "")
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-}
 
 /** Account menu: switch business, platform admin, sign out. */
 export function UserMenu({
@@ -43,21 +35,27 @@ export function UserMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        render={<Button variant="ghost" className="h-auto w-full justify-start gap-2 px-2 py-1.5" />}
+        render={
+          <Button
+            variant="ghost"
+            className="size-10 rounded-full header-control p-0"
+            aria-label={`${t("shell.account")}: ${user.name}`}
+          />
+        }
       >
-        <Avatar className="size-7">
+        <Avatar className="size-10 after:hidden">
           {user.image ? <AvatarImage src={user.image} alt="" /> : null}
           <AvatarFallback className="bg-primary text-primary-foreground">
             {initials(user.name)}
           </AvatarFallback>
         </Avatar>
-        <span className="grid min-w-0 flex-1 text-left text-sm leading-tight">
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-64">
+        <div className="grid px-2 py-2 text-sm leading-tight">
           <span className="truncate font-medium">{user.name}</span>
           <span className="truncate text-xs text-muted-foreground">{user.email}</span>
-        </span>
-        <ChevronsUpDown className="size-4 text-muted-foreground" aria-hidden="true" />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-64">
+        </div>
+        <DropdownMenuSeparator />
         <DropdownMenuGroup>
           <DropdownMenuLabel>{t("shell.businesses")}</DropdownMenuLabel>
           {tenants.map((tenant) => (

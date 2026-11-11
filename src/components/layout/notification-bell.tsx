@@ -44,7 +44,14 @@ export function NotificationBell({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        render={<Button variant="ghost" size="icon" className="relative" aria-label={label} />}
+        render={
+          <Button
+            variant="ghost"
+            size="icon"
+            className="relative size-10 rounded-full header-control"
+            aria-label={label}
+          />
+        }
       >
         <Bell className="size-4" aria-hidden="true" />
         {unread > 0 ? (

@@ -1,14 +1,14 @@
 import type { ReactNode } from "react";
 import { t } from "@/i18n";
 
-const control = "h-9 min-w-0 rounded-md border border-input bg-transparent px-2 text-sm dark:bg-input/30";
+const control = "h-9 min-w-0 rounded-md border border-input bg-card px-2 text-sm dark:bg-input/30";
 
 /** GET form for list filters: works without JavaScript and keeps filters in the URL. */
 export function FilterBar({ children }: { children: ReactNode }) {
   return (
     <form role="search" className="flex flex-wrap items-end gap-2">
       {children}
-      <button type="submit" className="h-9 rounded-md border px-3 text-sm hover:bg-accent">
+      <button type="submit" className="h-9 rounded-md border bg-card px-3 text-sm hover:bg-accent">
         {t("form.filter")}
       </button>
     </form>
