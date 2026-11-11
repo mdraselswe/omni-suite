@@ -2,6 +2,7 @@ import Link from "next/link";
 import { StatusBadge } from "@/components/data/status-badge";
 import { ActionForm, SubmitButton } from "@/components/form/action-form";
 import { EmptyState, PageHeader } from "@/components/layout/page";
+import { billingStatuses } from "@/features/billing";
 import { platformTenants, setTenantStatusAction } from "@/features/settings";
 import { t } from "@/i18n";
 import { formatDate } from "@/lib/dates";
@@ -14,7 +15,7 @@ const control =
 
 export default async function AdminPage() {
   await requirePlatformAdmin();
-  const rows = await platformTenants(db());
+  const [rows, subs] = await Promise.all([platformTenants(db()), billingStatuses(db())]);
 
   return (
     <div className="grid gap-6">
@@ -37,7 +38,8 @@ export default async function AdminPage() {
                 </div>
                 <p className="text-xs text-muted-foreground">
                   /{tenant.slug} · {t("admin.members")}: {members} · {t("admin.created")}:{" "}
-                  {formatDate(tenant.createdAt.toISOString().slice(0, 10))}
+                  {formatDate(tenant.createdAt.toISOString().slice(0, 10))} · {t("admin.billing")}:{" "}
+                  {subs.get(tenant.id) ?? "none"}
                 </p>
               </div>
               <ActionForm

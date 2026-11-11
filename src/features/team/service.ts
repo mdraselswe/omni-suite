@@ -1,5 +1,6 @@
 import "server-only";
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { assertSeatAvailable } from "@/features/billing";
 import { t } from "@/i18n";
 import { randomToken } from "@/lib/ids";
 import { DEFAULT_ROLE_KEYS, permissionDef, type Audience } from "@/modules/catalog";
@@ -83,6 +84,7 @@ export async function createInvitation(
       .innerJoin(user, eq(user.id, memberships.userId))
       .where(and(eq(memberships.tenantId, ctx.tenant.id), eq(user.email, email)));
     if (existing.length > 0) throw new UserError(t("team.alreadyMember"));
+    if (input.kind === "internal") await assertSeatAvailable(tx, ctx.tenant);
 
     const token = randomToken(24);
     await tx.insert(invitations).values({

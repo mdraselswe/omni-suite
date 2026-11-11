@@ -1,8 +1,12 @@
 import { notFound } from "next/navigation";
+import { param } from "@/components/data/filter-bar";
 import { formatters } from "@/components/data/format";
+import { ActionButton } from "@/components/form/action-button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { StatusBadge } from "@/components/data/status-badge";
 import { ButtonLink } from "@/components/ui/button-link";
 import { displayStatus, getInvoice, PrintButton } from "@/features/invoices";
+import { canPayOnline, payInvoiceAction } from "@/features/payments";
 import { t } from "@/i18n";
 import { today } from "@/lib/dates";
 import { tenantHref } from "@/lib/href";
@@ -10,8 +14,12 @@ import { db } from "@/server/db";
 import { LineItemsTable } from "../../_components/line-items-table";
 import { portalPage } from "../../_components/portal";
 
-export default async function PortalInvoice({ params }: PageProps<"/[tenant]/portal/invoices/[invoiceId]">) {
+export default async function PortalInvoice({
+  params,
+  searchParams,
+}: PageProps<"/[tenant]/portal/invoices/[invoiceId]">) {
   const { tenant, invoiceId } = await params;
+  const sp = await searchParams;
   const { ctx, clientId } = await portalPage(tenant, "portal.invoices");
   if (!/^[0-9a-f-]{36}$/.test(invoiceId)) notFound();
   const row = await getInvoice(db(), ctx.tenant.id, invoiceId);
@@ -24,6 +32,11 @@ export default async function PortalInvoice({ params }: PageProps<"/[tenant]/por
   const settings = ctx.tenant.settings;
   const status = displayStatus(invoice, today(settings.timezone));
   const business = settings.branding.displayName || ctx.tenant.name;
+  const balance = invoice.totalMinor - invoice.paidMinor;
+  const payable =
+    (invoice.status === "sent" || invoice.status === "partially_paid") &&
+    balance > 0n &&
+    (await canPayOnline(db(), ctx.tenant.id, invoice.currency));
 
   return (
     <div className="grid gap-6">
@@ -31,8 +44,32 @@ export default async function PortalInvoice({ params }: PageProps<"/[tenant]/por
         <ButtonLink href={tenantHref(tenant, "portal/invoices")} variant="ghost" size="sm" className="-ml-2">
           {t("portal.backToList")}
         </ButtonLink>
-        <PrintButton />
+        <div className="flex flex-wrap items-center gap-2">
+          {payable ? (
+            <ActionButton
+              action={payInvoiceAction.bind(null, tenant)}
+              values={{ invoiceId: invoice.id }}
+              variant="default"
+              size="default"
+            >
+              {t("payments.payOnline", { amount: money(balance) })}
+            </ActionButton>
+          ) : null}
+          <PrintButton />
+        </div>
       </div>
+      {param(sp, "paid") ? (
+        <Alert className="print:hidden">
+          <AlertDescription>{t("payments.paidNotice")}</AlertDescription>
+        </Alert>
+      ) : param(sp, "cancelled") ? (
+        <Alert className="print:hidden">
+          <AlertDescription>{t("payments.cancelledNotice")}</AlertDescription>
+        </Alert>
+      ) : null}
+      {payable ? (
+        <p className="-mt-4 text-xs text-muted-foreground print:hidden">{t("payments.secure")}</p>
+      ) : null}
 
       <article className="grid gap-6 surface p-4 sm:p-8 print:border-0 print:p-0">
         <header className="flex flex-wrap items-start justify-between gap-4">

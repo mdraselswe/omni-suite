@@ -1,3 +1,4 @@
+import { billingConfig } from "./billing.ts";
 import { buildEnv, publicEnv } from "./env.ts";
 import { featuresConfig } from "./features.ts";
 import { siteConfig } from "./site.ts";
@@ -18,8 +19,19 @@ export const features = {
   offlineBanner: featuresConfig.pwa && featuresConfig.offlineBanner,
 };
 
+/** Platform subscription plans and Stripe settings. */
+export const billing = billingConfig;
+
 export const isProduction = buildEnv.NODE_ENV === "production";
 
-export type { RenderMode, SidebarStyle, SurfaceStyle, ThemeMode, ThemePresetKey } from "./schema.ts";
-export { SIDEBAR_STYLES, SURFACE_STYLES, THEME_MODES, THEME_PRESETS } from "./schema.ts";
+export type {
+  BillingConfig,
+  PlanKey,
+  RenderMode,
+  SidebarStyle,
+  SurfaceStyle,
+  ThemeMode,
+  ThemePresetKey,
+} from "./schema.ts";
+export { PLAN_KEYS, SIDEBAR_STYLES, SURFACE_STYLES, THEME_MODES, THEME_PRESETS } from "./schema.ts";
 export { themePresets, type Gradient, type ThemePreset } from "./themes.ts";

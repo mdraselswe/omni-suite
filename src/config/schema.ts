@@ -100,3 +100,27 @@ export const featuresSchema = z.object({
 });
 
 export type FeaturesConfig = z.infer<typeof featuresSchema>;
+
+export const PLAN_KEYS = ["starter", "growth", "scale"] as const;
+export type PlanKey = (typeof PLAN_KEYS)[number];
+
+export const billingSchema = z.object({
+  /** Stripe API version sent with every request (one known response shape). */
+  stripeApiVersion: z.string().regex(/^\d{4}-\d{2}-\d{2}\.[a-z]+$/),
+  /** Free days before the first charge, for a business that has never subscribed. */
+  trialDays: z.number().int().min(0).max(90),
+  plans: z
+    .array(
+      z.object({
+        key: z.enum(PLAN_KEYS),
+        /** Shown on the plan card. Must match the Stripe Price (env STRIPE_PRICE_<KEY>). */
+        price: z.object({ amount: z.number().positive(), currency: z.string().length(3) }),
+        /** Team members (internal) the plan allows; null = no limit. */
+        maxMembers: z.number().int().positive().nullable(),
+        highlighted: z.boolean().default(false),
+      }),
+    )
+    .min(1),
+});
+
+export type BillingConfig = z.infer<typeof billingSchema>;

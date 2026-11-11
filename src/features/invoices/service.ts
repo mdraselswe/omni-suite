@@ -11,7 +11,7 @@ import type { Database, DbOrTx } from "@/server/db";
 import { categories, clients, invoicePayments, invoices, recurringInvoices } from "@/server/db/schema";
 import { clientUserIds, nextCounter, notify } from "@/server/shared";
 import type { TenantContext } from "@/server/tenancy/context";
-import { insertTransaction } from "@/features/finance";
+import { insertTransaction, type Writer } from "@/features/finance";
 
 /** Who is acting: a member (ctx) or the system (scheduled jobs). */
 export type Actor = { tenant: TenantContext["tenant"]; userId: string | null };
@@ -189,13 +189,35 @@ export async function voidInvoice(database: Database, ctx: TenantContext, id: st
 }
 
 /** Records a payment: income in the ledger, payment row, paid amount and status. */
+export type PaymentInput = {
+  amountMinor: bigint;
+  date: string;
+  accountId: string;
+  method: string;
+  categoryId: string | null;
+  /** Provider reference (Stripe Checkout Session id); a repeat is ignored. */
+  externalRef?: string;
+};
+
 export async function recordPayment(
   database: Database,
-  ctx: TenantContext,
+  ctx: Writer,
   id: string,
-  input: { amountMinor: bigint; date: string; accountId: string; method: string; categoryId: string | null },
+  input: PaymentInput,
 ): Promise<void> {
   await database.transaction(async (tx) => {
+    if (input.externalRef) {
+      const [seen] = await tx
+        .select({ id: invoicePayments.id })
+        .from(invoicePayments)
+        .where(
+          and(
+            eq(invoicePayments.tenantId, ctx.tenant.id),
+            eq(invoicePayments.externalRef, input.externalRef),
+          ),
+        );
+      if (seen) return;
+    }
     const inv = await loadInvoice(tx, ctx.tenant.id, id);
     if (inv.status === "draft" || inv.status === "void" || inv.status === "paid")
       throw new UserError(t("invoices.notPayable"));
@@ -238,6 +260,7 @@ export async function recordPayment(
       amountMinor: input.amountMinor,
       date: input.date,
       method: input.method,
+      externalRef: input.externalRef ?? null,
     });
     const paid = inv.paidMinor + input.amountMinor;
     await tx
@@ -246,7 +269,7 @@ export async function recordPayment(
       .where(eq(invoices.id, inv.id));
     await audit(tx, {
       tenantId: ctx.tenant.id,
-      actorUserId: ctx.user.id,
+      actorUserId: ctx.user?.id ?? null,
       action: "invoice.payment",
       entityType: "invoice",
       entityId: inv.id,

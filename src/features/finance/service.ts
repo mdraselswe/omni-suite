@@ -233,11 +233,10 @@ export type NewTransaction = {
 };
 
 /** Inserts a ledger row inside an existing transaction (used by invoices and partners too). */
-export async function insertTransaction(
-  tx: DbOrTx,
-  ctx: TenantContext,
-  input: NewTransaction,
-): Promise<string> {
+/** Who writes a record: a signed-in member, or the system (webhook, job) with no user. */
+export type Writer = { tenant: TenantContext["tenant"]; user: { id: string } | null };
+
+export async function insertTransaction(tx: DbOrTx, ctx: Writer, input: NewTransaction): Promise<string> {
   if (input.amountMinor <= 0n) throw new UserError(t("form.amount"));
   await assertOpenDate(tx, ctx.tenant.id, input.date);
   const [account] = await tx
@@ -282,13 +281,13 @@ export async function insertTransaction(
       partnerId: input.partnerId ?? null,
       clientId: input.clientId ?? null,
       invoiceId: input.invoiceId ?? null,
-      createdBy: ctx.user.id,
+      createdBy: ctx.user?.id ?? null,
     })
     .returning({ id: transactions.id });
   if (!row) throw new Error("Transaction insert failed");
   await audit(tx, {
     tenantId: ctx.tenant.id,
-    actorUserId: ctx.user.id,
+    actorUserId: ctx.user?.id ?? null,
     action: `transaction.${input.kind}`,
     entityType: "transaction",
     entityId: row.id,

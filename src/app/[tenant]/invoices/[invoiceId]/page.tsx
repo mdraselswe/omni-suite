@@ -234,7 +234,9 @@ export default async function InvoicePage({ params }: PageProps<"/[tenant]/invoi
               {payments.map((p) => (
                 <TableRow key={p.id}>
                   <TableCell>{f.date(p.date)}</TableCell>
-                  <TableCell>{p.method || "—"}</TableCell>
+                  <TableCell>
+                    {p.method === "stripe" ? t("payments.method.stripe") : p.method || "—"}
+                  </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {f.money(p.amountMinor, inv.currency)}
                   </TableCell>
