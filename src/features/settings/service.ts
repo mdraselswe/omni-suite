@@ -1,6 +1,6 @@
 import "server-only";
 import { resolveTxt } from "node:dns/promises";
-import { and, asc, desc, eq, ilike, isNotNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, ilike, isNotNull, lt, or } from "drizzle-orm";
 import { t } from "@/i18n";
 import { fieldKey } from "@/lib/custom-fields";
 import { randomToken } from "@/lib/ids";
@@ -247,10 +247,13 @@ export async function tenantForHost(
 /* ─── Platform admin ───────────────────────────────────────────── */
 
 export async function platformTenants(database: DbOrTx) {
-  const members = sql<number>`(select count(*)::int from ${memberships} where ${memberships.tenantId} = ${tenants.id})`;
+  // A join, not a correlated subquery: inside sql`` Drizzle prints bare column names,
+  // so `tenant_id = id` would compare against memberships.id and always count 0.
   return database
-    .select({ tenant: tenants, members })
+    .select({ tenant: tenants, members: count(memberships.tenantId) })
     .from(tenants)
+    .leftJoin(memberships, eq(memberships.tenantId, tenants.id))
+    .groupBy(tenants.id)
     .orderBy(desc(tenants.createdAt))
     .limit(1000);
 }
