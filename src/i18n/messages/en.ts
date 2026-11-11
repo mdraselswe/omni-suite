@@ -1,11 +1,14 @@
 import { enAdmin } from "./en-admin";
+import { enAi } from "./en-ai";
 import { enApp } from "./en-app";
 import { enCore } from "./en-core";
 import { enMoney } from "./en-money";
+import { enPayments } from "./en-payments";
 import { enUi1 } from "./en-ui-1";
 import { enUi2 } from "./en-ui-2";
 import { enUi3 } from "./en-ui-3";
 import { enWork } from "./en-work";
+import { enXero } from "./en-xero";
 
 /**
  * ✏️ Every UI string. Components call t("key"); `{name}` placeholders are
@@ -21,6 +24,9 @@ export const en = {
   ...enUi1,
   ...enUi2,
   ...enUi3,
+  ...enPayments,
+  ...enXero,
+  ...enAi,
   "a11y.skip": "Skip to content",
   "nav.home": "Home",
   "nav.about": "About",

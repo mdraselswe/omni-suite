@@ -175,9 +175,14 @@ export const invoicePayments = pgTable(
     amountMinor: money("amount_minor"),
     date: day("date").notNull(),
     method: text("method").notNull().default(""),
+    /** Provider reference (e.g. Stripe Checkout Session id) so a webhook never records twice. */
+    externalRef: text("external_ref"),
     createdAt: createdAt(),
   },
-  (t) => [index("invoice_payments_invoice_idx").on(t.tenantId, t.invoiceId)],
+  (t) => [
+    index("invoice_payments_invoice_idx").on(t.tenantId, t.invoiceId),
+    uniqueIndex("invoice_payments_external_idx").on(t.tenantId, t.externalRef),
+  ],
 );
 
 export const recurringInvoices = pgTable(

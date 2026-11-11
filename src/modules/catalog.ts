@@ -333,6 +333,9 @@ export const MODULES: readonly ModuleDef[] = [
       internal("audit.read", "perm.audit.read", { owner: "all", admin: "all", accountant: "all" }),
       internal("backup.manage", "perm.backup.manage", { owner: "all" }),
       internal("domains.manage", "perm.domains.manage", { owner: "all" }),
+      internal("billing.manage", "perm.billing.manage", { owner: "all" }),
+      internal("payments.online", "perm.payments.online", { owner: "all" }),
+      internal("integrations.manage", "perm.integrations.manage", { owner: "all" }),
     ],
     nav: [
       {
@@ -352,6 +355,13 @@ export const MODULES: readonly ModuleDef[] = [
         area: "team",
       },
     ],
+  },
+  {
+    key: "ai",
+    label: "module.ai",
+    optional: true,
+    permissions: [internal("ai.use", "perm.ai.use", { ...owners, manager: "all" })],
+    nav: [],
   },
   {
     key: "portal",

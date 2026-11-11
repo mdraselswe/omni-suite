@@ -69,6 +69,22 @@ const serverSchema = z.object({
     .transform((v) => v !== "false" && v !== "0"),
   /** Max upload size in megabytes. */
   MAX_UPLOAD_MB: z.coerce.number().int().positive().default(25),
+
+  /** Platform Stripe account: businesses pay their OmniSuite subscription here. Empty = billing off. */
+  STRIPE_SECRET_KEY: z.string().default(""),
+  /** Signing secret of the platform webhook endpoint (<APP_URL>/api/stripe/webhook). */
+  STRIPE_WEBHOOK_SECRET: z.string().default(""),
+  /** Stripe Price ids (price_…) for the plans in src/config/billing.ts. */
+  STRIPE_PRICE_STARTER: z.string().default(""),
+  STRIPE_PRICE_GROWTH: z.string().default(""),
+  STRIPE_PRICE_SCALE: z.string().default(""),
+
+  /** Xero app (developer.xero.com → My Apps). Empty = Xero integration off. */
+  XERO_CLIENT_ID: z.string().default(""),
+  XERO_CLIENT_SECRET: z.string().default(""),
+
+  /** Claude API key (platform.claude.com). Empty = AI features off. */
+  ANTHROPIC_API_KEY: z.string().default(""),
 });
 
 export const publicEnv = publicSchema.parse({

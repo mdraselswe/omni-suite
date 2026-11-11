@@ -13,7 +13,10 @@ export default async function SettingsLayout({ children, params }: LayoutProps<"
   const general = hasPermission(ctx, "settings.manage");
   const backup = hasPermission(ctx, "backup.manage");
   const domains = hasPermission(ctx, "domains.manage");
-  if (!general && !backup && !domains) notFound();
+  const payments = hasPermission(ctx, "payments.online");
+  const billing = hasPermission(ctx, "billing.manage");
+  const xero = hasPermission(ctx, "integrations.manage");
+  if (!general && !backup && !domains && !payments && !billing && !xero) notFound();
 
   const items: { href: Route; label: string; exact?: boolean }[] = [];
   if (general) {
@@ -27,6 +30,9 @@ export default async function SettingsLayout({ children, params }: LayoutProps<"
   }
   if (backup) items.push({ href: tenantHref(tenant, "settings/backup"), label: t("settings.backup") });
   if (domains) items.push({ href: tenantHref(tenant, "settings/domains"), label: t("settings.domains") });
+  if (payments) items.push({ href: tenantHref(tenant, "settings/payments"), label: t("settings.payments") });
+  if (xero) items.push({ href: tenantHref(tenant, "settings/xero"), label: t("settings.xero") });
+  if (billing) items.push({ href: tenantHref(tenant, "settings/billing"), label: t("settings.billing") });
 
   return (
     <div>
