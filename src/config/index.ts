@@ -23,3 +23,4 @@ export const isProduction = buildEnv.NODE_ENV === "production";
 export type { RenderMode, SidebarStyle, SurfaceStyle, ThemeMode, ThemePresetKey } from "./schema.ts";
 export { SIDEBAR_STYLES, SURFACE_STYLES, THEME_MODES, THEME_PRESETS } from "./schema.ts";
 export { themePresets, type Gradient, type ThemePreset } from "./themes.ts";
+export { aiConfig } from "./ai.ts";
