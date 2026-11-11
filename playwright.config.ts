@@ -12,7 +12,12 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : "list",
-  use: { baseURL: `http://localhost:${PORT}`, trace: "on-first-retry" },
+  // Reduced motion: pages render in their final state, so axe checks contrast on settled colours.
+  use: {
+    baseURL: `http://localhost:${PORT}`,
+    trace: "on-first-retry",
+    contextOptions: { reducedMotion: "reduce" },
+  },
   projects: [
     // Signs in once per demo role (see tests/e2e/auth.setup.ts).
     { name: "setup", testMatch: /auth\.setup\.ts/ },

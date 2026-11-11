@@ -58,6 +58,7 @@ test.describe("owner", () => {
     "/demo/team/roles/",
     "/demo/audit/",
     "/demo/settings/",
+    "/demo/settings/branding/",
     "/demo/settings/modules/",
     "/demo/settings/fields/",
     "/demo/settings/pipeline/",
