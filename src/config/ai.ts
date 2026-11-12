@@ -97,8 +97,12 @@ const ai: AiConfig = {
    *   proposalDraft: { provider: "gemini" },
    */
   features: {},
-  /** e.g. ["openai", "gemini"]: used in order when the chosen provider fails. */
-  fallbackProviders: [],
+  /**
+   * Tried in order (only those with a key) when the chosen provider has no key or fails.
+   * Groq first: fast, steady and its free tier doesn't train on prompts. Gemini's free tier
+   * may train on prompts, so production with real clients wants a paid key in front.
+   */
+  fallbackProviders: ["groq", "gemini"],
   maxTokens: 16000,
   timeoutMs: 90_000,
   dailyRequestsPerBusiness: 50,
