@@ -263,6 +263,10 @@ export const limitsSchema = z.object({
     perEmailMax: z.number().int().positive(),
     perEmailWindowMinutes: z.number().int().positive(),
   }),
+  imports: z.object({
+    /** Data rows one CSV import may hold (leads, bank transactions). Bigger files are refused, not cut short. */
+    maxRows: z.number().int().positive().max(20_000),
+  }),
 });
 
 export type LimitsConfig = z.infer<typeof limitsSchema>;

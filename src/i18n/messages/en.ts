@@ -2,7 +2,10 @@ import { enAccount } from "./en-account";
 import { enAdmin } from "./en-admin";
 import { enAi } from "./en-ai";
 import { enApp } from "./en-app";
+import { enBills } from "./en-bills";
 import { enCore } from "./en-core";
+import { enCredit } from "./en-credit";
+import { enImports } from "./en-imports";
 import { enInfra } from "./en-infra";
 import { enLocale } from "./en-locale";
 import { enLedger } from "./en-ledger";
@@ -12,6 +15,7 @@ import { enPayments } from "./en-payments";
 import { enPortalAccess } from "./en-portal-access";
 import { enPortalWork } from "./en-portal-work";
 import { enSecurity } from "./en-security";
+import { enShare } from "./en-share";
 import { enUi1 } from "./en-ui-1";
 import { enUi2 } from "./en-ui-2";
 import { enUi3 } from "./en-ui-3";
@@ -45,6 +49,10 @@ export const en = {
   ...enSecurity,
   ...enPortalWork,
   ...enPortalAccess,
+  ...enBills,
+  ...enCredit,
+  ...enImports,
+  ...enShare,
   "a11y.skip": "Skip to content",
   "nav.home": "Home",
   "nav.about": "About",

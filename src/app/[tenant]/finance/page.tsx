@@ -9,6 +9,7 @@ import { EmptyState, Section, StatCard } from "@/components/layout/page";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
+  BankImportDialog,
   createTransactionAction,
   listAccounts,
   pageTransactions,
@@ -86,21 +87,30 @@ export default async function FinancePage({ params, searchParams }: PageProps<"/
         title={t("finance.transactions")}
         actions={
           canWrite ? (
-            <FormDialog
-              trigger={t("finance.newTx")}
-              title={t("finance.newTx")}
-              action={createTransactionAction.bind(null, tenant)}
-              wide
-            >
-              <TransactionFields
+            <div className="flex flex-wrap gap-2">
+              <BankImportDialog
+                tenant={tenant}
                 accounts={accOpts}
-                categories={cats}
-                partners={partners}
-                clients={clients}
-                today={today(ctx.tenant.settings.timezone)}
-                fx={transactionFx(ctx, tenant)}
+                base={ctx.tenant.settings.currency}
+                locale={ctx.tenant.settings.locale}
+                defaultAccountId={accountId}
               />
-            </FormDialog>
+              <FormDialog
+                trigger={t("finance.newTx")}
+                title={t("finance.newTx")}
+                action={createTransactionAction.bind(null, tenant)}
+                wide
+              >
+                <TransactionFields
+                  accounts={accOpts}
+                  categories={cats}
+                  partners={partners}
+                  clients={clients}
+                  today={today(ctx.tenant.settings.timezone)}
+                  fx={transactionFx(ctx, tenant)}
+                />
+              </FormDialog>
+            </div>
           ) : null
         }
       >

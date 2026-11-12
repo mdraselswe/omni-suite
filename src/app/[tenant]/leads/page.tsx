@@ -19,6 +19,7 @@ import {
   boardLeads,
   convertLeadAction,
   createLeadAction,
+  LeadImportDialog,
   leadStageTotals,
   moveLeadAction,
   pageLeads,
@@ -308,14 +309,17 @@ export default async function LeadsPage({ params, searchParams }: PageProps<"/[t
         description={t("leads.sub")}
         actions={
           canWrite ? (
-            <FormDialog
-              trigger={t("leads.new")}
-              title={t("leads.new")}
-              action={createLeadAction.bind(null, tenant)}
-              wide
-            >
-              <LeadFields stages={stages} members={members} defs={defs} currency={f.currency} />
-            </FormDialog>
+            <div className="flex flex-wrap gap-2">
+              <LeadImportDialog tenant={tenant} stages={stages} locale={ctx.tenant.settings.locale} />
+              <FormDialog
+                trigger={t("leads.new")}
+                title={t("leads.new")}
+                action={createLeadAction.bind(null, tenant)}
+                wide
+              >
+                <LeadFields stages={stages} members={members} defs={defs} currency={f.currency} />
+              </FormDialog>
+            </div>
           ) : null
         }
         className="mb-0"
