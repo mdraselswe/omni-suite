@@ -1,7 +1,7 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import type { AiConfig } from "@/config";
-import { AiNoAnswerError, type AiProvider, type AiRequest, type Completion } from "./types";
+import { AiNoAnswerError, AiProviderError, type AiProvider, type AiRequest, type Completion } from "./types";
 
 type Params = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming;
 type Message = Anthropic.Beta.Messages.BetaMessage;
@@ -60,21 +60,42 @@ export function anthropicProvider(options: {
   timeoutMs: number;
   create?: ClaudeCreate;
 }): AiProvider {
-  let create = options.create;
-  const send: ClaudeCreate = (params) => {
-    if (!create) {
-      const client = new Anthropic({
-        apiKey: options.apiKey,
-        baseURL: options.settings.baseUrl,
-        timeout: options.timeoutMs,
-        maxRetries: 1,
-      });
-      create = (p) => client.beta.messages.create(p);
-    }
-    return create(params);
-  };
+  let client: Anthropic | null = null;
+  const sdk = () =>
+    (client ??= new Anthropic({
+      apiKey: options.apiKey,
+      baseURL: options.settings.baseUrl,
+      timeout: options.timeoutMs,
+      maxRetries: 1,
+    }));
+  const create: ClaudeCreate = options.create ?? ((p) => sdk().beta.messages.create(p));
   return {
     id: "anthropic",
-    complete: async (request) => claudeCompletion(await send(claudeParams(request, options.settings))),
+    complete: async (request) => {
+      let answer: ClaudeAnswer;
+      try {
+        answer = await create(claudeParams(request, options.settings));
+      } catch (error) {
+        throw asProviderError(error);
+      }
+      return claudeCompletion(answer);
+    },
+    listModels: async () => {
+      try {
+        const ids: string[] = [];
+        for await (const model of sdk().models.list()) ids.push(model.id);
+        return ids.sort();
+      } catch (error) {
+        throw asProviderError(error);
+      }
+    },
   };
+}
+
+/** SDK errors as AiProviderError (status only, never the message, which may echo the prompt). */
+function asProviderError(error: unknown): AiProviderError {
+  return new AiProviderError(
+    "anthropic",
+    error instanceof Anthropic.APIError ? (error.status ?? null) : null,
+  );
 }

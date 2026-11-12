@@ -31,6 +31,8 @@ export type Completion = {
 export type AiProvider = {
   id: AiProviderId;
   complete(request: AiRequest): Promise<Completion>;
+  /** Model ids this key can use (checks the key without spending tokens). */
+  listModels?(): Promise<string[]>;
 };
 
 /** The model declined (safety) or the answer was cut off; nothing usable came back. */

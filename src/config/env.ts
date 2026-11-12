@@ -105,10 +105,15 @@ const serverSchema = z.object({
 
   /** Claude API key (platform.claude.com). Empty = features that use Claude are off. */
   ANTHROPIC_API_KEY: z.string().default(""),
-  /**
-   * Key for the "openai-compatible" AI provider (OpenAI, OpenRouter, Groq, DeepSeek,
-   * Gemini…; any non-empty value for a local Ollama). Empty = that provider is off.
-   */
+  /** Other AI providers (src/config/ai.ts). Each one is off while its key is empty. */
+  OPENAI_API_KEY: z.string().default(""),
+  GEMINI_API_KEY: z.string().default(""),
+  DEEPSEEK_API_KEY: z.string().default(""),
+  XAI_API_KEY: z.string().default(""),
+  MISTRAL_API_KEY: z.string().default(""),
+  GROQ_API_KEY: z.string().default(""),
+  OPENROUTER_API_KEY: z.string().default(""),
+  /** Key for the spare "openai-compatible" slot (any non-empty value for a local Ollama). */
   OPENAI_COMPATIBLE_API_KEY: z.string().default(""),
 
   /** Exchange-rate source for "Use today's rate" (default: src/config/regional.ts). "off" hides it. */

@@ -4,7 +4,7 @@ import { aiConfig, type AiConfig } from "@/config";
 import { aiSchema } from "@/config/schema";
 import { anthropicProvider, type ClaudeAnswer, type ClaudeCreate } from "./anthropic";
 import { openAiCompatibleProvider } from "./openai-compatible";
-import { aiConfigured, completeWith, resolveAiChoice } from "./registry";
+import { aiChain, aiConfigured, completeWith, providerStatuses, resolveAiChoice } from "./registry";
 import { AiNoAnswerError, AiProviderError, type AiProvider, type AiRequest } from "./types";
 
 const request: AiRequest = {
@@ -91,6 +91,8 @@ describe("provider registry", () => {
 
 describe("openai-compatible provider", () => {
   const settings: AiConfig["providers"]["openai-compatible"] = {
+    label: "Example",
+    free: "no",
     baseUrl: "https://api.example.com/v1/",
     model: "m",
     jsonMode: "json_schema",
@@ -236,5 +238,162 @@ describe("anthropic provider", () => {
       });
       await expect(provider.complete(request)).rejects.toThrow(AiNoAnswerError);
     }
+  });
+});
+
+describe("several providers", () => {
+  const ok = (id: AiProvider["id"]): AiProvider => ({
+    id,
+    complete: async (r) => ({ text: "ok", inputTokens: 1, outputTokens: 1, model: r.model }),
+  });
+  const failing =
+    (status: number | null): AiProvider["complete"] =>
+    async () => {
+      throw new AiProviderError("anthropic", status);
+    };
+  const config: AiConfig = {
+    ...aiConfig,
+    defaultProvider: "anthropic",
+    features: {},
+    fallbackProviders: ["gemini", "groq"],
+  };
+
+  it("has its own settings and key for each provider, all off without a key", () => {
+    const statuses = providerStatuses(aiConfig, {});
+    expect(statuses.map((s) => s.id)).toEqual([
+      "anthropic",
+      "openai",
+      "gemini",
+      "deepseek",
+      "xai",
+      "mistral",
+      "groq",
+      "openrouter",
+      "openai-compatible",
+    ]);
+    expect(statuses.every((s) => !s.hasKey && s.model !== "")).toBe(true);
+    expect(new Set(statuses.map((s) => s.keyName)).size).toBe(statuses.length);
+    expect(aiConfigured(undefined, aiConfig, {})).toBe(false);
+    const gemini = providerStatuses(aiConfig, { GEMINI_API_KEY: "g" }).find((s) => s.id === "gemini");
+    expect(gemini).toMatchObject({ hasKey: true, free: "yes-trains" });
+  });
+
+  it("chains the chosen provider with fallbacks that have a key", () => {
+    const keys = { ANTHROPIC_API_KEY: "a", GROQ_API_KEY: "g" };
+    expect(aiChain("insights", config, keys)).toEqual([
+      { provider: "anthropic", model: config.providers.anthropic.model },
+      { provider: "groq", model: config.providers.groq.model },
+    ]);
+    // Without Claude's key the fallback alone still makes the feature usable.
+    expect(aiConfigured("insights", config, { GROQ_API_KEY: "g" })).toBe(true);
+    expect(aiChain("insights", config, { GROQ_API_KEY: "g" })).toEqual([
+      { provider: "groq", model: config.providers.groq.model },
+    ]);
+  });
+
+  it("tries the next provider when one is rate limited or down, not after a refusal", async () => {
+    const keys = { ANTHROPIC_API_KEY: "a", GEMINI_API_KEY: "g", GROQ_API_KEY: "q" };
+    const calls: string[] = [];
+    const providers =
+      (behaviour: Partial<Record<AiProvider["id"], AiProvider["complete"]>>) => (id: AiProvider["id"]) => ({
+        id,
+        complete: async (r: AiRequest) => {
+          calls.push(id);
+          const custom = behaviour[id];
+          return custom ? custom(r) : ok(id).complete(r);
+        },
+      });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const answer = await completeWith(
+      "insights",
+      { system: "s", messages: [] },
+      config,
+      providers({ anthropic: failing(429), gemini: failing(503) }),
+      keys,
+    );
+    expect(calls).toEqual(["anthropic", "gemini", "groq"]);
+    expect(answer.model).toBe(config.providers.groq.model);
+
+    calls.length = 0;
+    const refused: AiProvider["complete"] = async () => {
+      throw new AiNoAnswerError("refusal");
+    };
+    await expect(
+      completeWith(
+        "insights",
+        { system: "s", messages: [] },
+        config,
+        providers({ anthropic: refused }),
+        keys,
+      ),
+    ).rejects.toThrow(AiNoAnswerError);
+    expect(calls).toEqual(["anthropic"]);
+
+    calls.length = 0;
+    await expect(
+      completeWith(
+        "insights",
+        { system: "s", messages: [] },
+        config,
+        providers({ anthropic: failing(500), gemini: failing(null), groq: failing(429) }),
+        keys,
+      ),
+    ).rejects.toThrow(AiProviderError);
+    expect(calls).toEqual(["anthropic", "gemini", "groq"]);
+    warn.mockRestore();
+  });
+
+  it("names the provider in errors, turns network failures into errors and lists models", async () => {
+    const settings = { ...aiConfig.providers.gemini };
+    const down = openAiCompatibleProvider({
+      id: "gemini",
+      apiKey: "k",
+      settings,
+      timeoutMs: 1000,
+      fetch: async () => {
+        throw new TypeError("fetch failed");
+      },
+    });
+    await expect(down.complete(request)).rejects.toMatchObject({ provider: "gemini", status: null });
+    const fetchMock = vi.fn<typeof fetch>(
+      async () =>
+        new Response(JSON.stringify({ data: [{ id: "models/gemini-b" }, { id: "models/gemini-a" }] }), {
+          status: 200,
+        }),
+    );
+    const up = openAiCompatibleProvider({
+      id: "gemini",
+      apiKey: "k",
+      settings,
+      timeoutMs: 1000,
+      fetch: fetchMock,
+    });
+    await expect(up.listModels?.()).resolves.toEqual(["gemini-a", "gemini-b"]);
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
+    expect(url).toBe(`${settings.baseUrl}/models`);
+    expect(new Headers(init?.headers).get("authorization")).toBe("Bearer k");
+    const denied = openAiCompatibleProvider({
+      id: "groq",
+      apiKey: "bad",
+      settings: aiConfig.providers.groq,
+      timeoutMs: 1000,
+      fetch: async () => new Response("{}", { status: 401 }),
+    });
+    await expect(denied.listModels?.()).rejects.toMatchObject({ provider: "groq", status: 401 });
+  });
+
+  it("maps Claude SDK failures to provider errors without the message", async () => {
+    const Anthropic = (await import("@anthropic-ai/sdk")).default;
+    const provider = anthropicProvider({
+      apiKey: "k",
+      settings: { model: "claude-opus-5-5", effort: "medium" },
+      timeoutMs: 1000,
+      create: async () => {
+        throw new Anthropic.RateLimitError(429, { message: "secret prompt" }, "secret prompt", new Headers());
+      },
+    });
+    const error: unknown = await provider.complete(request).catch((e: unknown) => e);
+    expect(error).toMatchObject({ provider: "anthropic", status: 429 });
+    expect(String(error)).not.toContain("secret");
   });
 });

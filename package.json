@@ -29,6 +29,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --import ./scripts/lib/server-only-hook.mjs --env-file-if-exists=.env.local src/server/db/migrate-cli.ts",
     "db:seed": "tsx --import ./scripts/lib/server-only-hook.mjs --env-file-if-exists=.env.local src/server/seed-cli.ts",
+    "ai:check": "tsx --import ./scripts/lib/server-only-hook.mjs --env-file-if-exists=.env.local src/server/ai/check-cli.ts",
     "prepare": "husky"
   },
   "dependencies": {

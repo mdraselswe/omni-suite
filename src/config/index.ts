@@ -36,6 +36,7 @@ export type {
   AiConfig,
   AiFeature,
   AiProviderId,
+  ChatProviderId,
   BillingConfig,
   LimitsConfig,
   ListsConfig,

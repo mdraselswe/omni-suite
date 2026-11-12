@@ -129,9 +129,25 @@ export const billingSchema = z.object({
 
 export type BillingConfig = z.infer<typeof billingSchema>;
 
-/** AI services the app can call. Each one's API key comes from env (src/config/env.ts). */
-export const AI_PROVIDERS = ["anthropic", "openai-compatible"] as const;
+/**
+ * AI services the app can call. Each one's API key comes from env (src/config/env.ts);
+ * a provider without a key is off. All but "anthropic" speak OpenAI's Chat Completions
+ * API; "openai-compatible" is a spare slot for any other such service (Ollama, Together…).
+ */
+export const AI_PROVIDERS = [
+  "anthropic",
+  "openai",
+  "gemini",
+  "deepseek",
+  "xai",
+  "mistral",
+  "groq",
+  "openrouter",
+  "openai-compatible",
+] as const;
 export type AiProviderId = (typeof AI_PROVIDERS)[number];
+/** The providers reached through the Chat Completions adapter. */
+export type ChatProviderId = Exclude<AiProviderId, "anthropic">;
 
 /** Features that call AI. Each can pick its own provider and model in src/config/ai.ts. */
 export const AI_FEATURES = ["proposalDraft", "insights"] as const;
@@ -140,6 +156,29 @@ export type AiFeature = (typeof AI_FEATURES)[number];
 export const AI_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 
 const modelId = z.string().trim().min(1);
+
+/** A service with an OpenAI-style `POST <baseUrl>/chat/completions`. */
+const chatProviderSchema = z.object({
+  /** Name shown in the admin page and `pnpm ai:check`. */
+  label: z.string().min(1),
+  model: modelId,
+  /** Base URL without a trailing slash and without /chat/completions. */
+  baseUrl: z.url(),
+  /**
+   * How to ask for JSON: "json_schema" (strict schema), "json_object" (any JSON; the
+   * schema goes into the instructions) or "none" (schema only in the instructions).
+   */
+  jsonMode: z.enum(["json_schema", "json_object", "none"]),
+  /** Name of the answer-length field: OpenAI's newer models want "max_completion_tokens". */
+  tokenLimitParam: z.enum(["max_tokens", "max_completion_tokens"]),
+  /** Where to get a key (shown next to a provider that has none). */
+  keyUrl: z.url().optional(),
+  /**
+   * Whether the service has a free tier, and whether it may use free-tier prompts to
+   * train its models (then use it with sample data only, never real client data).
+   */
+  free: z.enum(["no", "yes", "yes-trains"]),
+});
 
 export const aiSchema = z.object({
   /** Provider every feature uses unless `features` says otherwise. */
@@ -153,28 +192,26 @@ export const aiSchema = z.object({
       /** Only for a gateway or proxy in front of the Claude API; leave out for the real API. */
       baseUrl: z.url().optional(),
     }),
-    /**
-     * Any server with an OpenAI-style `POST <baseUrl>/chat/completions`: OpenAI, OpenRouter,
-     * Groq, DeepSeek, Ollama, Gemini's OpenAI endpoint. Key: OPENAI_COMPATIBLE_API_KEY.
-     */
-    "openai-compatible": z.object({
-      model: modelId,
-      /** Base URL without a trailing slash and without /chat/completions. */
-      baseUrl: z.url(),
-      /**
-       * How to ask for JSON: "json_schema" (strict schema, OpenAI/OpenRouter/Groq/Ollama),
-       * "json_object" (any JSON, e.g. DeepSeek) or "none" (schema only in the instructions).
-       */
-      jsonMode: z.enum(["json_schema", "json_object", "none"]),
-      /** Name of the answer-length field: OpenAI's newer models want "max_completion_tokens". */
-      tokenLimitParam: z.enum(["max_tokens", "max_completion_tokens"]),
-    }),
+    openai: chatProviderSchema,
+    gemini: chatProviderSchema,
+    deepseek: chatProviderSchema,
+    xai: chatProviderSchema,
+    mistral: chatProviderSchema,
+    groq: chatProviderSchema,
+    openrouter: chatProviderSchema,
+    "openai-compatible": chatProviderSchema,
   }),
   /** Per-feature override: a different provider and/or model (e.g. a cheaper, faster one). */
   features: z.partialRecord(
     z.enum(AI_FEATURES),
     z.object({ provider: z.enum(AI_PROVIDERS).optional(), model: modelId.optional() }).strict(),
   ),
+  /**
+   * Tried in this order (with their own models) when the chosen provider is down, rate
+   * limited or out of credit. Only providers with a key are tried. Business data goes to
+   * every provider listed here, so list only ones you trust with it.
+   */
+  fallbackProviders: z.array(z.enum(AI_PROVIDERS)),
   /** Hard cap on one answer's length (tokens). */
   maxTokens: z.number().int().positive(),
   /** Give up on a request after this long (milliseconds). */
