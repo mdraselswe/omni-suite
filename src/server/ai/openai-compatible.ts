@@ -88,12 +88,23 @@ function stripCodeFence(text: string): string {
 
 const modelsSchema = z.object({ data: z.array(z.object({ id: z.string() })) });
 
+/** Busy or rate-limited for a moment: worth one more try (Gemini's free tier often answers 503). */
+const RETRY_STATUSES = new Set([429, 502, 503, 504]);
+
+/** How long to wait before the retry: the server's Retry-After when short, else the default. */
+export function retryDelay(response: Response, fallbackMs: number): number {
+  const seconds = Number(response.headers.get("retry-after"));
+  return Number.isFinite(seconds) && seconds > 0 && seconds <= 10 ? seconds * 1000 : fallbackMs;
+}
+
 export function openAiCompatibleProvider(options: {
   id?: ChatProviderId;
   apiKey: string;
   settings: Settings;
   timeoutMs: number;
   fetch?: typeof fetch;
+  /** Wait before the one retry of a busy answer (tests pass 0). */
+  retryDelayMs?: number;
 }): AiProvider {
   const id = options.id ?? "openai-compatible";
   const send = options.fetch ?? fetch;
@@ -102,13 +113,22 @@ export function openAiCompatibleProvider(options: {
     "content-type": "application/json",
     ...(options.apiKey ? { authorization: `Bearer ${options.apiKey}` } : {}),
   };
-  /** One HTTP call; network failures and timeouts become AiProviderError (status null). */
-  async function call(path: string, init: RequestInit, timeoutMs: number): Promise<unknown> {
-    let response: Response;
+  const fetchOnce = async (path: string, init: RequestInit, timeoutMs: number) => {
     try {
-      response = await send(`${base}${path}`, { ...init, headers, signal: AbortSignal.timeout(timeoutMs) });
+      return await send(`${base}${path}`, { ...init, headers, signal: AbortSignal.timeout(timeoutMs) });
     } catch {
       throw new AiProviderError(id, null);
+    }
+  };
+  /**
+   * One HTTP call, retried once when the service is busy (429/502/503/504). Network
+   * failures and timeouts become AiProviderError (status null).
+   */
+  async function call(path: string, init: RequestInit, timeoutMs: number): Promise<unknown> {
+    let response = await fetchOnce(path, init, timeoutMs);
+    if (RETRY_STATUSES.has(response.status)) {
+      await new Promise((resolve) => setTimeout(resolve, retryDelay(response, options.retryDelayMs ?? 2000)));
+      response = await fetchOnce(path, init, timeoutMs);
     }
     // The body may echo the request, so it is never read into an error.
     if (!response.ok) throw new AiProviderError(id, response.status);

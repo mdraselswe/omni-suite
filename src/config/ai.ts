@@ -28,7 +28,8 @@ const ai: AiConfig = {
     gemini: {
       label: "Google Gemini",
       baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-      model: "gemini-3.8-flash",
+      /** The newest flash model is often "high demand" (503) on the free tier; 3.6 answers more often. */
+      model: "gemini-3.6-flash",
       jsonMode: "json_schema",
       tokenLimitParam: "max_tokens",
       keyUrl: "https://aistudio.google.com/apikey",

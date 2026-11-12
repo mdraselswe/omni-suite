@@ -37,7 +37,8 @@ async function ping(s: ProviderStatus): Promise<string> {
       {
         system: "You check that an API connection works.",
         messages: [{ role: "user", content: 'Reply with the JSON {"ok": true} and nothing else.' }],
-        maxTokens: 200,
+        // Room for models that think before answering (Gemini 3, DeepSeek).
+        maxTokens: 2000,
         json: {
           name: "ping",
           schema: {
@@ -97,10 +98,10 @@ async function main() {
     log("");
   }
   if (!statuses.some((s) => s.hasKey)) log("No AI key is set: AI features stay hidden.");
-  process.exit(0);
 }
 
 main().catch((error: unknown) => {
   console.error(error instanceof Error ? error.name : "ai:check failed");
-  process.exit(1);
+  // exitCode, not exit(): exiting while fetch sockets close crashes Node on Windows.
+  process.exitCode = 1;
 });

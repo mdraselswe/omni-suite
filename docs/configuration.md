@@ -63,7 +63,7 @@ Every AI call goes through `src/server/ai/`: a feature (`proposalDraft`, `insigh
 | ------------------- | ------------------------------------------------- | --------------------------- | ---------------------- | -------------------------- |
 | `anthropic`         | Claude (official SDK)                             | `ANTHROPIC_API_KEY`         | `claude-opus-5-5`      | no                         |
 | `openai`            | OpenAI                                            | `OPENAI_API_KEY`            | `gpt-6.1-terra`        | no                         |
-| `gemini`            | Google Gemini (OpenAI endpoint)                   | `GEMINI_API_KEY`            | `gemini-3.8-flash`     | yes, may train on prompts  |
+| `gemini`            | Google Gemini (OpenAI endpoint)                   | `GEMINI_API_KEY`            | `gemini-3.6-flash`     | yes, may train on prompts  |
 | `deepseek`          | DeepSeek                                          | `DEEPSEEK_API_KEY`          | `deepseek-flash`       | no (very cheap)            |
 | `xai`               | xAI Grok                                          | `XAI_API_KEY`               | `grok-4.3`             | no                         |
 | `mistral`           | Mistral                                           | `MISTRAL_API_KEY`           | `mistral-small-latest` | yes, may train on prompts  |

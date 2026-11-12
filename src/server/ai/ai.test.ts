@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { aiConfig, type AiConfig } from "@/config";
 import { aiSchema } from "@/config/schema";
 import { anthropicProvider, type ClaudeAnswer, type ClaudeCreate } from "./anthropic";
-import { openAiCompatibleProvider } from "./openai-compatible";
+import { openAiCompatibleProvider, retryDelay } from "./openai-compatible";
 import { aiChain, aiConfigured, completeWith, providerStatuses, resolveAiChoice } from "./registry";
 import { AiNoAnswerError, AiProviderError, type AiProvider, type AiRequest } from "./types";
 
@@ -380,6 +380,32 @@ describe("several providers", () => {
       fetch: async () => new Response("{}", { status: 401 }),
     });
     await expect(denied.listModels?.()).rejects.toMatchObject({ provider: "groq", status: 401 });
+  });
+
+  it("retries a busy answer once, then gives up", async () => {
+    const answers = [503, 200];
+    const fetchMock = vi.fn<typeof fetch>(async () => {
+      const status = answers.shift() ?? 503;
+      return new Response(
+        JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "{}" } }] }),
+        { status },
+      );
+    });
+    const make = () =>
+      openAiCompatibleProvider({
+        id: "gemini",
+        apiKey: "k",
+        settings: aiConfig.providers.gemini,
+        timeoutMs: 1000,
+        fetch: fetchMock,
+        retryDelayMs: 0,
+      });
+    await expect(make().complete(request)).resolves.toMatchObject({ text: "{}" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await expect(make().complete(request)).rejects.toMatchObject({ provider: "gemini", status: 503 });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(retryDelay(new Response("", { headers: { "retry-after": "3" } }), 2000)).toBe(3000);
+    expect(retryDelay(new Response("", { headers: { "retry-after": "120" } }), 2000)).toBe(2000);
   });
 
   it("maps Claude SDK failures to provider errors without the message", async () => {
