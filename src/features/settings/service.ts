@@ -1,27 +1,35 @@
 import "server-only";
 import { createHmac } from "node:crypto";
 import { resolveTxt } from "node:dns/promises";
-import { and, asc, count, desc, eq, ilike, inArray, isNotNull, isNull, lt, ne, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
 import { site } from "@/config";
 import { serverEnv } from "@/config/env";
 import { t } from "@/i18n";
 import { fieldKey } from "@/lib/custom-fields";
 import { randomToken } from "@/lib/ids";
+import { paginate, type PageRequest } from "@/lib/pagination";
 import { tenantSettingsSchema, type TenantSettings } from "@/lib/tenant-settings";
 import { MODULES } from "@/modules/catalog";
 import { UserError } from "@/server/action";
 import { audit } from "@/server/audit";
 import type { Database, DbOrTx } from "@/server/db";
 import {
+  accounts,
   auditLogs,
+  capitalContributions,
   customFieldDefs,
+  invoices,
   leads,
   memberships,
   projects,
+  proposals,
+  recurringInvoices,
   tenantDomains,
   tenants,
+  transactions,
   user,
 } from "@/server/db/schema";
+import { matchesSearch } from "@/server/search";
 import type { TenantContext } from "@/server/tenancy/context";
 
 /* ─── Settings ─────────────────────────────────────────────────── */
@@ -32,7 +40,12 @@ export async function updateSettings(
   input: { name?: string; settings: Partial<TenantSettings> },
 ): Promise<void> {
   const merged = tenantSettingsSchema.parse({ ...ctx.tenant.settings, ...input.settings });
+  const current = ctx.tenant.settings.currency;
   await database.transaction(async (tx) => {
+    // Every stored base amount is in the current currency; relabelling it would make all totals wrong.
+    if (merged.currency !== current && (await moneyRecorded(tx, ctx.tenant.id))) {
+      throw new UserError(t("locale.currencyLockedError", { currency: current }));
+    }
     await tx
       .update(tenants)
       .set({ settings: merged, ...(input.name ? { name: input.name } : {}), updatedAt: new Date() })
@@ -46,6 +59,39 @@ export async function updateSettings(
       data: { name: input.name, keys: Object.keys(input.settings) },
     });
   });
+}
+
+/**
+ * True once any amount in the base currency is stored: ledger rows, invoices,
+ * proposals, recurring invoices, capital or a non-zero opening balance.
+ * From then on the business currency is locked.
+ */
+export async function moneyRecorded(database: DbOrTx, tenantId: string): Promise<boolean> {
+  const found = await Promise.all([
+    database
+      .select({ id: transactions.id })
+      .from(transactions)
+      .where(eq(transactions.tenantId, tenantId))
+      .limit(1),
+    database.select({ id: invoices.id }).from(invoices).where(eq(invoices.tenantId, tenantId)).limit(1),
+    database.select({ id: proposals.id }).from(proposals).where(eq(proposals.tenantId, tenantId)).limit(1),
+    database
+      .select({ id: recurringInvoices.id })
+      .from(recurringInvoices)
+      .where(eq(recurringInvoices.tenantId, tenantId))
+      .limit(1),
+    database
+      .select({ id: capitalContributions.id })
+      .from(capitalContributions)
+      .where(eq(capitalContributions.tenantId, tenantId))
+      .limit(1),
+    database
+      .select({ id: accounts.id })
+      .from(accounts)
+      .where(and(eq(accounts.tenantId, tenantId), ne(accounts.openingBalanceMinor, 0n)))
+      .limit(1),
+  ]);
+  return found.some((rows) => rows.length > 0);
 }
 
 export function optionalModules() {
@@ -242,29 +288,41 @@ export async function deleteCustomField(database: Database, ctx: TenantContext, 
 
 /* ─── Audit log ────────────────────────────────────────────────── */
 
-export async function listAudit(
+/**
+ * One page of the audit log, newest first. Numbered pages (offset): the log only grows at
+ * the top, so a new entry can repeat a row on the next page but never hides one.
+ * `q` finds words in the action, record type or the person's name or email.
+ */
+export async function pageAudit(
   database: DbOrTx,
   tenantId: string,
-  filter: { q?: string; before?: Date; limit?: number } = {},
+  filter: { q?: string },
+  page: PageRequest,
 ) {
-  return database
-    .select({ log: auditLogs, actorName: user.name, actorEmail: user.email })
-    .from(auditLogs)
-    .leftJoin(user, eq(user.id, auditLogs.actorUserId))
-    .where(
-      and(
-        eq(auditLogs.tenantId, tenantId),
-        filter.before ? lt(auditLogs.createdAt, filter.before) : undefined,
-        filter.q
-          ? or(
-              ilike(auditLogs.action, `%${filter.q.replace(/[%_]/g, "")}%`),
-              ilike(auditLogs.entityType, `%${filter.q.replace(/[%_]/g, "")}%`),
-            )
-          : undefined,
-      ),
-    )
-    .orderBy(desc(auditLogs.createdAt))
-    .limit(filter.limit ?? 100);
+  const where = and(
+    eq(auditLogs.tenantId, tenantId),
+    matchesSearch(filter.q, [auditLogs.action, auditLogs.entityType, user.name, user.email]),
+  );
+  return paginate(
+    page,
+    async () => {
+      const [row] = await database
+        .select({ n: count() })
+        .from(auditLogs)
+        .leftJoin(user, eq(user.id, auditLogs.actorUserId))
+        .where(where);
+      return row?.n ?? 0;
+    },
+    (limit, offset) =>
+      database
+        .select({ log: auditLogs, actorName: user.name, actorEmail: user.email })
+        .from(auditLogs)
+        .leftJoin(user, eq(user.id, auditLogs.actorUserId))
+        .where(where)
+        .orderBy(desc(auditLogs.createdAt), desc(auditLogs.id))
+        .limit(limit)
+        .offset(offset),
+  );
 }
 
 /* ─── Custom domains ───────────────────────────────────────────── */

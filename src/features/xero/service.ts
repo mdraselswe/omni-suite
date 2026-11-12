@@ -1,6 +1,5 @@
 import "server-only";
-import { and, eq, inArray, ne } from "drizzle-orm";
-import { parseTenantSettings } from "@/lib/tenant-settings";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { audit } from "@/server/audit";
 import { decrypt, encrypt } from "@/server/crypto";
 import type { Database, DbOrTx } from "@/server/db";
@@ -60,10 +59,11 @@ export async function xeroAccessToken(database: Database, tenantId: string): Pro
     // Another worker may have refreshed while we waited for the lock.
     const fresh = accessCache.get(tenantId);
     if (fresh && fresh.until > Date.now()) return fresh.token;
-    const tokens = await refreshTokens(decrypt(conn.refreshTokenEnc));
+    // Bound to the business (AAD): a token row copied to another business won't decrypt.
+    const tokens = await refreshTokens(decrypt(conn.refreshTokenEnc, tenantId));
     await tx
       .update(xeroConnections)
-      .set({ refreshTokenEnc: encrypt(tokens.refreshToken) })
+      .set({ refreshTokenEnc: encrypt(tokens.refreshToken, tenantId) })
       .where(eq(xeroConnections.id, conn.id));
     remember(tenantId, tokens.accessToken, tokens.expiresIn);
     return tokens.accessToken;
@@ -93,7 +93,7 @@ export async function saveXeroConnection(
     const values = {
       xeroTenantId: input.xeroTenantId,
       xeroTenantName: input.xeroTenantName,
-      refreshTokenEnc: encrypt(input.refreshToken),
+      refreshTokenEnc: encrypt(input.refreshToken, input.tenantId),
       connectedBy: input.userId,
       lastError: null,
     };
@@ -144,7 +144,7 @@ export async function disconnectXero(database: Database, tenantId: string, userI
   const conn = await getXeroConnection(database, tenantId);
   if (!conn) return;
   // Revoking the refresh token also removes the app's connection in Xero.
-  await revokeToken(decrypt(conn.refreshTokenEnc));
+  await revokeToken(decrypt(conn.refreshTokenEnc, tenantId));
   await database.transaction(async (tx) => {
     await tx.delete(xeroLinks).where(eq(xeroLinks.tenantId, tenantId));
     await tx.delete(xeroConnections).where(eq(xeroConnections.tenantId, tenantId));
@@ -162,7 +162,10 @@ export async function xeroDueForSync(database: DbOrTx, now: Date): Promise<strin
       lastSyncedAt: xeroConnections.lastSyncedAt,
       lastError: xeroConnections.lastError,
     })
-    .from(xeroConnections);
+    .from(xeroConnections)
+    .innerJoin(tenants, eq(tenants.id, xeroConnections.tenantId))
+    // Suspended businesses don't sync.
+    .where(eq(tenants.status, "active"));
   return rows
     .filter((r) => r.lastError !== RECONNECT_NEEDED && (!r.lastSyncedAt || r.lastSyncedAt < hourAgo))
     .map((r) => r.tenantId);
@@ -217,11 +220,6 @@ export async function syncXero(database: Database, tenantId: string): Promise<Sy
     const token = await xeroAccessToken(database, tenantId);
     const api = <T>(method: "GET" | "POST" | "PUT", path: string, body?: unknown) =>
       xeroApi<T>(token, conn.xeroTenantId, method, path, body);
-    const [tenant] = await database
-      .select({ settings: tenants.settings })
-      .from(tenants)
-      .where(eq(tenants.id, tenantId));
-    const pricesIncludeTax = parseTenantSettings(tenant?.settings).tax.pricesIncludeTax;
     const settings: XeroSettings = {
       salesAccountCode: conn.salesAccountCode,
       paymentAccountCode: conn.paymentAccountCode,
@@ -242,7 +240,13 @@ export async function syncXero(database: Database, tenantId: string): Promise<Sy
       clientIds.length === 0
         ? []
         : await database
-            .select({ id: clients.id, name: clients.name, email: clients.email, phone: clients.phone })
+            .select({
+              id: clients.id,
+              name: clients.name,
+              // Xero sends invoices to the contact's email: the billing one when set.
+              email: sql<string>`coalesce(nullif(${clients.billingEmail}, ''), ${clients.email})`,
+              phone: clients.phone,
+            })
             .from(clients)
             .where(and(eq(clients.tenantId, tenantId), inArray(clients.id, clientIds)));
     const pendingContacts: { clientId: string; payload: XeroContact; hash: string }[] = [];
@@ -293,7 +297,13 @@ export async function syncXero(database: Database, tenantId: string): Promise<Sy
       const contactId = clientLinks.get(inv.clientId)?.xeroId;
       if (!contactId) continue; // its contact failed above; reported there
       const link = invoiceLinks.get(inv.id);
-      const payload = invoicePayload(inv, { contactId, pricesIncludeTax, settings, invoiceId: link?.xeroId });
+      // Each invoice keeps the tax setting it was made with, even if the business changed it later.
+      const payload = invoicePayload(inv, {
+        contactId,
+        pricesIncludeTax: inv.pricesIncludeTax,
+        settings,
+        invoiceId: link?.xeroId,
+      });
       const hash = invoiceHash(payload);
       if (link && link.hash === hash) continue;
       pendingInvoices.push({ invoiceId: inv.id, payload, hash });

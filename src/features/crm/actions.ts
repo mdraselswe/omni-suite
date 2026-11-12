@@ -21,12 +21,18 @@ async function parseLead(slug: string, formData: FormData, permission: "leads.wr
       stage: fields.required(50),
       value: fields.money(ctx.tenant.settings.currency, { optional: true }),
       notes: fields.text(5000),
+      followUpDate: fields.optionalDate(),
       ownerMembershipId: fields.optionalId(),
     })
     .parse(raw);
   const custom = customValues(await customFieldsFor(db(), ctx.tenant.id, "lead"), raw);
-  const { value, ...rest } = input;
-  return { ctx, scope, raw, lead: { ...rest, valueMinor: value, custom } };
+  const { value, followUpDate, ...rest } = input;
+  return {
+    ctx,
+    scope,
+    raw,
+    lead: { ...rest, valueMinor: value, followUpDate: followUpDate || null, custom },
+  };
 }
 
 export async function createLeadAction(

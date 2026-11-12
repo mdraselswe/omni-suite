@@ -1,15 +1,42 @@
 import { z } from "zod";
-import { allocate, applyBasisPoints, sum } from "@/lib/money";
+import { addDays, addMonths, daysBetween, monthEnd, monthStart } from "@/lib/dates";
+import { allocate, allocateShare, applyBasisPoints, sum } from "@/lib/money";
 
 /**
  * Configurable profit sharing (ADR 0006). Pure functions: no database access.
  *
  * Waterfall for a positive profit:
  *   1. reserve (basis points of profit) stays in the business
- *   2. fixed partner fees (pro rata if the profit can't cover them all)
+ *   2. fixed partner fees: a monthly amount, prorated to the days in the period
+ *      (and cut pro rata if the profit can't cover them all)
  *   3. the rest is split by the chosen method
  * A loss (profit ≤ 0) skips reserve and fees and is shared by `lossMethod`.
+ * With no partners in a period, everything stays in the business as reserve.
  */
+
+/** One month in "micro-months": fees are scaled by the months a period covers. */
+export const MICRO_MONTH = 1_000_000n;
+
+/**
+ * How many months `start`–`end` (inclusive) covers, in micro-months: each
+ * calendar month counts its days in the range ÷ its length. A whole month is
+ * exactly MICRO_MONTH, so full-month periods never round.
+ */
+export function monthsCovered(start: string, end: string): bigint {
+  if (end < start) return 0n;
+  let total = 0n;
+  let cursor = start;
+  while (cursor <= end) {
+    const last = monthEnd(cursor);
+    const until = end < last ? end : last;
+    const days = BigInt(daysBetween(cursor, until) + 1);
+    const length = BigInt(daysBetween(monthStart(cursor), last) + 1);
+    total += days === length ? MICRO_MONTH : (days * MICRO_MONTH + length / 2n) / length;
+    cursor = addDays(last, 1);
+    if (cursor > addMonths(end, 1)) break;
+  }
+  return total;
+}
 
 const bigintString = z.string().regex(/^\d+$/, "Whole minor units");
 
@@ -98,14 +125,18 @@ export function calculateProfit(input: {
   expenseMinor: bigint;
   partners: readonly PartnerInput[];
   rule: ProfitRule;
+  /** Months the period covers (micro-months); monthly fees scale by it. Default one month. */
+  feeMonths?: bigint;
 }): ProfitResult {
   const { partners, rule } = input;
+  const feeMonths = input.feeMonths ?? MICRO_MONTH;
   const profitMinor = input.revenueMinor - input.expenseMinor;
   const zeroLines = () =>
     partners.map((p) => ({ partnerId: p.partnerId, feeMinor: 0n, shareMinor: 0n, totalMinor: 0n }));
 
+  // Nobody to pay: the result stays in the business (it isn't lost from the totals).
   if (partners.length === 0) {
-    return { profitMinor, reserveMinor: 0n, feesMinor: 0n, distributableMinor: 0n, lines: [] };
+    return { profitMinor, reserveMinor: profitMinor, feesMinor: 0n, distributableMinor: 0n, lines: [] };
   }
 
   if (profitMinor <= 0n) {
@@ -129,7 +160,11 @@ export function calculateProfit(input: {
   const afterReserve = profitMinor - reserveMinor;
 
   const wantedFees = partners.map((p) =>
-    sum(rule.fees.filter((f) => f.partnerId === p.partnerId).map((f) => BigInt(f.amountMinor))),
+    allocateShare(
+      sum(rule.fees.filter((f) => f.partnerId === p.partnerId).map((f) => BigInt(f.amountMinor))),
+      feeMonths,
+      MICRO_MONTH,
+    ),
   );
   const wantedTotal = sum(wantedFees);
   const fees = wantedTotal <= afterReserve ? wantedFees : allocate(afterReserve, wantedFees);

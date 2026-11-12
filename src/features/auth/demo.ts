@@ -11,4 +11,5 @@ export const DEMO_ACCOUNTS = [
   { email: "staff@demo.test", name: "Rafi Ahmed", label: "Staff" },
   { email: "accountant@demo.test", name: "Sarah Mitchell", label: "Accountant" },
   { email: "client@demo.test", name: "Jack Wilson", label: "Client" },
+  { email: "clientstaff@demo.test", name: "Lucy Park", label: "Client (team member)" },
 ] as const;

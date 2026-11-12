@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { SelectField, TextField } from "@/components/form/field";
 import { t } from "@/i18n";
+import { FxRateField, type TransactionFx } from "./fx-rate-field";
+import { TaxField } from "./tax-field";
 
 type Option = { value: string; label: string };
 
@@ -15,16 +17,23 @@ export function TransactionFields({
   partners,
   clients,
   today,
+  fx,
   defaultKind = "expense",
 }: {
-  accounts: Option[];
+  accounts: (Option & { currency?: string })[];
   categories: { value: string; name: string; kind: "income" | "expense" }[];
   partners: Option[];
   clients: Option[];
   today: string;
+  fx: TransactionFx;
   defaultKind?: (typeof KINDS)[number];
 }) {
   const [kind, setKind] = useState<(typeof KINDS)[number]>(defaultKind);
+  const [accountId, setAccountId] = useState(accounts[0]?.value ?? "");
+  const [amount, setAmount] = useState("");
+  const [toAccountId, setToAccountId] = useState("");
+  const currency = accounts.find((a) => a.value === accountId)?.currency ?? fx.base;
+  const toCurrency = accounts.find((a) => a.value === toAccountId)?.currency ?? currency;
   const cats = categories.filter((c) => c.kind === kind).map((c) => ({ value: c.value, label: c.name }));
   return (
     <div className="grid gap-4 sm:grid-cols-2">
@@ -40,13 +49,17 @@ export function TransactionFields({
         name="accountId"
         label={kind === "transfer" ? t("finance.from") : t("finance.account")}
         options={accounts}
+        value={accountId}
+        onChange={(e) => setAccountId(e.target.value)}
       />
       {kind === "transfer" ? (
         <SelectField
           name="toAccountId"
           label={t("finance.toAccount")}
-          options={accounts}
+          options={accounts.filter((a) => a.value !== accountId)}
           placeholder={t("form.choose")}
+          value={toAccountId}
+          onChange={(e) => setToAccountId(e.target.value)}
         />
       ) : null}
       {kind === "income" || kind === "expense" ? (
@@ -68,16 +81,30 @@ export function TransactionFields({
           placeholder={t("form.none")}
         />
       ) : null}
-      <TextField name="amount" label={t("finance.amount")} inputMode="decimal" placeholder="0.00" required />
-      <TextField name="description" label={t("form.description")} className="sm:col-span-2" />
       <TextField
-        name="fxRate"
-        label={t("finance.fxRate")}
-        hint={t("finance.fxHint")}
+        name="amount"
+        label={t("finance.amount")}
         inputMode="decimal"
-        placeholder="1"
-        className="sm:col-span-2"
+        placeholder="0.00"
+        onChange={(e) => setAmount(e.target.value)}
+        required
       />
+      {(kind === "income" || kind === "expense") && fx.tax ? (
+        <TaxField key={currency} tax={fx.tax} currency={currency} amount={amount} />
+      ) : null}
+      {kind === "transfer" && toAccountId && toCurrency !== currency ? (
+        <TextField
+          key={toCurrency}
+          name="toAmount"
+          label={t("finance.toAmount", { currency: toCurrency })}
+          hint={t("finance.toAmountHint")}
+          inputMode="decimal"
+          placeholder="0.00"
+          required
+        />
+      ) : null}
+      <TextField name="description" label={t("form.description")} className="sm:col-span-2" />
+      <FxRateField key={currency} fx={fx} currency={currency} amount={amount} />
     </div>
   );
 }

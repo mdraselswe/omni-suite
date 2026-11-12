@@ -5,10 +5,11 @@ import { t } from "@/i18n";
 import { today } from "@/lib/dates";
 import { parseTenantSettings } from "@/lib/tenant-settings";
 import { audit } from "@/server/audit";
-import { decrypt, encrypt } from "@/server/crypto";
+import { decrypt, encrypt, isUnbound } from "@/server/crypto";
 import type { Database, DbOrTx } from "@/server/db";
 import { googleConnections, syncOutbox, tenants } from "@/server/db/schema";
 import {
+  canExportSet,
   ENTITY_SETS,
   EXPORT_SET_NAMES,
   exportRows,
@@ -27,6 +28,19 @@ import {
   uploadJson,
 } from "@/server/google";
 import { enqueue } from "@/server/jobs/queue";
+import { ownerMembershipIds } from "@/server/rbac/service";
+import { hasPermission, type TenantContext } from "@/server/tenancy/context";
+
+/**
+ * A full backup (JSON download, Google Drive copy) holds every record of the
+ * business, so backup.manage alone isn't enough: the member must be an owner, or
+ * already able to export every data set (no reading finance through a backup).
+ */
+export async function canBackUpEverything(database: DbOrTx, ctx: TenantContext): Promise<boolean> {
+  if (!hasPermission(ctx, "backup.manage", "all")) return false;
+  if ((await ownerMembershipIds(database, ctx.tenant.id)).includes(ctx.membership.id)) return true;
+  return EXPORT_SET_NAMES.every((set) => canExportSet(ctx, set));
+}
 
 export async function getConnection(database: DbOrTx, tenantId: string) {
   const [row] = await database
@@ -47,14 +61,14 @@ export async function saveConnection(
         tenantId: input.tenantId,
         connectedBy: input.userId,
         googleEmail: input.email,
-        refreshTokenEnc: encrypt(input.refreshToken),
+        refreshTokenEnc: encrypt(input.refreshToken, input.tenantId),
       })
       .onConflictDoUpdate({
         target: googleConnections.tenantId,
         set: {
           connectedBy: input.userId,
           googleEmail: input.email,
-          refreshTokenEnc: encrypt(input.refreshToken),
+          refreshTokenEnc: encrypt(input.refreshToken, input.tenantId),
           lastError: null,
         },
       });
@@ -84,7 +98,15 @@ export async function disconnect(database: Database, tenantId: string, userId: s
 async function prepare(database: DbOrTx, tenantId: string) {
   const conn = await getConnection(database, tenantId);
   if (!conn) return null;
-  const token = await accessToken(decrypt(conn.refreshTokenEnc));
+  const refreshToken = decrypt(conn.refreshTokenEnc, tenantId);
+  if (isUnbound(conn.refreshTokenEnc)) {
+    // Stored before tokens were bound to their business: bind it now.
+    await database
+      .update(googleConnections)
+      .set({ refreshTokenEnc: encrypt(refreshToken, tenantId) })
+      .where(eq(googleConnections.tenantId, tenantId));
+  }
+  const token = await accessToken(refreshToken);
   let { folderId, spreadsheetId } = conn;
   if (!folderId || !spreadsheetId) {
     const [tenant] = await database
@@ -186,9 +208,11 @@ export async function snapshot(database: Database, tenantId: string): Promise<vo
   }
 }
 
-/** Tenants with a backup connection (for the nightly scheduler). */
+/** Active (not suspended) tenants with a backup connection (for the nightly scheduler). */
 export async function connectedTenants(database: DbOrTx) {
   return database
     .select({ tenantId: googleConnections.tenantId, lastSnapshotAt: googleConnections.lastSnapshotAt })
-    .from(googleConnections);
+    .from(googleConnections)
+    .innerJoin(tenants, eq(tenants.id, googleConnections.tenantId))
+    .where(eq(tenants.status, "active"));
 }

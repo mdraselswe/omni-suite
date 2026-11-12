@@ -1,4 +1,4 @@
-import type { LineItem } from "@/lib/line-items";
+import { lineAmount, type LineItem } from "@/lib/line-items";
 
 type Entry = { membershipId: string; minutes: number; hourlyRateMinor: bigint };
 
@@ -27,10 +27,34 @@ export function timeInvoiceLines(
     if (group) group.minutes += e.minutes;
     else groups.set(key, { membershipId: e.membershipId, rate: e.hourlyRateMinor, minutes: e.minutes });
   }
-  return [...groups.values()].map((g) => ({
-    description: options.describe(g.membershipId).slice(0, 500),
-    quantity: hoursQuantity(g.minutes),
-    unitPriceMinor: g.rate.toString(),
-    taxRateBp: options.taxRateBp,
-  }));
+  return [...groups.values()].map((g) => {
+    // Hours with 3 decimals are exact only for multiples of 3 minutes (20 min = 0.333 h would
+    // under-bill). Otherwise bill one line at the exact amount, with the hours in the text.
+    const exact = (g.minutes * 1000) % 60 === 0;
+    const description = options.describe(g.membershipId);
+    if (exact) {
+      return {
+        description: description.slice(0, 500),
+        quantity: hoursQuantity(g.minutes),
+        unitPriceMinor: g.rate.toString(),
+        taxRateBp: options.taxRateBp,
+      };
+    }
+    const minutes = BigInt(g.minutes);
+    const amount = (minutes * g.rate * 2n + 60n) / 120n;
+    return {
+      description: `${description} · ${hoursQuantity(g.minutes)} h`.slice(0, 500),
+      quantity: "1",
+      unitPriceMinor: amount.toString(),
+      taxRateBp: options.taxRateBp,
+    };
+  });
+}
+
+/** What the time will be invoiced at (before tax): the same lines the invoice gets. */
+export function timeValue(entries: readonly Entry[]): bigint {
+  return timeInvoiceLines(entries, { taxRateBp: 0, describe: () => "" }).reduce(
+    (sum, line) => sum + lineAmount(line),
+    0n,
+  );
 }

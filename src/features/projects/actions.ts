@@ -25,6 +25,7 @@ import {
   updateProject,
   updateTask,
 } from "./service";
+import { parseTemplateTasks } from "./template-tasks";
 
 async function parseProject(slug: string, formData: FormData) {
   const { ctx, scope } = await actionContext(slug, "projects.write");
@@ -97,15 +98,11 @@ export async function saveProjectTemplateAction(
     const input = z
       .object({ id: fields.optionalId(), name: fields.required(120), tasks: fields.text(10000) })
       .parse(formObject(formData));
-    const tasks = input.tasks
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean)
-      .map((line) => {
-        const [title = "", flag = ""] = line.split("|").map((p) => p.trim());
-        return { title: title.slice(0, 200), clientVisible: flag.toLowerCase() === "client" };
-      });
-    await saveProjectTemplate(db(), ctx, { id: input.id, name: input.name, tasks });
+    await saveProjectTemplate(db(), ctx, {
+      id: input.id,
+      name: input.name,
+      tasks: parseTemplateTasks(input.tasks),
+    });
   });
 }
 
@@ -206,6 +203,7 @@ export async function approveTaskAction(
   return runAction(async () => {
     const { ctx } = await actionContext(slug, "portal.approve");
     await approveTask(db(), ctx, fields.id().parse(formObject(formData).id));
+    return t("portalWork.approved");
   });
 }
 
@@ -237,6 +235,7 @@ export async function addCommentAction(
       .object({ projectId: fields.id(), body: fields.required(5000), clientVisible: fields.checkbox() })
       .parse(formObject(formData));
     await addComment(db(), ctxPerm.ctx, input);
+    if (ctxPerm.ctx.membership.kind === "client") return t("portalWork.commentSent");
   });
 }
 

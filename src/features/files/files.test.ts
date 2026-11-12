@@ -103,6 +103,38 @@ describe("file uploads", () => {
     ).rejects.toThrow();
   });
 
+  it("keeps ledger receipts from people who can't read the ledger", async () => {
+    const { addMember } = await import("@/server/testing/db");
+    const { createAccount, createTransaction } = await import("@/features/finance");
+    const { fileForDownload, listFiles, uploadFile } = await import("./service");
+    const account = await createAccount(database, ctx, {
+      name: "Receipts bank",
+      type: "bank",
+      currency: ctx.tenant.settings.currency,
+      openingBalanceMinor: 0n,
+    });
+    const txn = await createTransaction(database, ctx, {
+      kind: "expense",
+      accountId: account,
+      date: "2026-07-01",
+      description: "Printer ink",
+      amountMinor: 4_500n,
+    });
+    const id = await uploadFile(database, ctx, {
+      file: file("receipt.pdf"),
+      entityType: "transaction",
+      entityId: txn,
+      clientVisible: false,
+    });
+    // A manager sees every file, but no money: the receipt stays hidden.
+    const { ctx: manager } = await addMember(database, "fls", "manager", "Mo Manager");
+    expect(manager.permissions.get("files.read")).toBe("all");
+    expect(manager.permissions.has("finance.read")).toBe(false);
+    expect((await listFiles(database, manager, "all")).map((r) => r.file.id)).not.toContain(id);
+    expect(await fileForDownload(database, manager, "all", id)).toBeFalsy();
+    expect((await listFiles(database, ctx, "all")).map((r) => r.file.id)).toContain(id);
+  });
+
   it("lets a client upload only to their own client and projects, shares it and tells the team", async () => {
     const { files, notifications } = await import("@/server/db/schema");
     const { and, eq } = await import("drizzle-orm");
@@ -140,5 +172,37 @@ describe("file uploads", () => {
     const portalIds = (await listFiles(database, portal, "all")).map((r) => r.file.id);
     expect(portalIds).not.toContain(hidden);
     expect(await listFiles(database, ctx, "all", { limit: 2 })).toHaveLength(2);
+  });
+});
+
+describe("storage quota", () => {
+  it("refuses an upload that would take the business over its quota", async () => {
+    const { storageQuota, storageUsed, uploadFile } = await import("./service");
+    const { files } = await import("@/server/db/schema");
+    const before = await storageUsed(database, ctx.tenant.id);
+    // Fill the quota up to the last 2 bytes with rows (an integer column holds < 2 GB each).
+    let left = storageQuota() - before - 2;
+    while (left > 0) {
+      const size = Math.min(left, 2_000_000_000);
+      await database.insert(files).values({
+        tenantId: ctx.tenant.id,
+        entityType: "general",
+        name: "big.bin",
+        mime: "application/octet-stream",
+        size,
+        storageKey: `${ctx.tenant.id}/${crypto.randomUUID()}`,
+        uploadedBy: ownerId,
+      });
+      left -= size;
+    }
+    const upload = () =>
+      uploadFile(database, ctx, {
+        file: file(),
+        entityType: "general",
+        entityId: null,
+        clientVisible: false,
+      });
+    await expect(upload()).rejects.toThrow(/file storage/);
+    expect(await storageUsed(database, ctx.tenant.id)).toBe(storageQuota() - 2);
   });
 });

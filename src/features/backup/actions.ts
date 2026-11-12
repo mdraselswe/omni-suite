@@ -6,7 +6,8 @@ import { formObject, runAction, type ActionState } from "@/server/action";
 import { actionContext } from "@/server/auth/session";
 import { db } from "@/server/db";
 import { enqueue } from "@/server/jobs/queue";
-import { disconnect } from "./service";
+import { ForbiddenError } from "@/server/tenancy/context";
+import { canBackUpEverything, disconnect } from "./service";
 
 /** Queues a background backup job ("full" rewrites every tab, "snapshot" writes the JSON file). */
 export async function queueBackupAction(
@@ -15,7 +16,8 @@ export async function queueBackupAction(
   formData: FormData,
 ): Promise<ActionState> {
   return runAction(async () => {
-    const { ctx } = await actionContext(slug, "backup.manage");
+    const { ctx } = await actionContext(slug, "backup.manage", "all");
+    if (!(await canBackUpEverything(db(), ctx))) throw new ForbiddenError("backup.manage");
     const { kind } = z.object({ kind: z.enum(["full", "snapshot"]) }).parse(formObject(formData));
     await enqueue(db(), {
       type: `backup.${kind}`,
@@ -28,7 +30,7 @@ export async function queueBackupAction(
 
 export async function disconnectBackupAction(slug: string): Promise<ActionState> {
   return runAction(async () => {
-    const { ctx } = await actionContext(slug, "backup.manage");
+    const { ctx } = await actionContext(slug, "backup.manage", "all");
     await disconnect(db(), ctx.tenant.id, ctx.user.id);
   });
 }

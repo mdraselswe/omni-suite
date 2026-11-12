@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { t } from "@/i18n";
-import { addDays } from "@/lib/dates";
+import { addDays, today } from "@/lib/dates";
 import { customValues, fields, formObject, runAction, type ActionState } from "@/server/action";
 import { actionContext } from "@/server/auth/session";
 import { db } from "@/server/db";
@@ -14,11 +14,14 @@ import {
   createRecurring,
   deleteRecurring,
   recordPayment,
+  resendInvoice,
   sendInvoice,
   setRecurringActive,
   updateInvoice,
   updateRecurring,
   voidInvoice,
+  writeOffBalance,
+  invoiceCurrency,
 } from "./service";
 
 async function parseInvoice(slug: string, formData: FormData) {
@@ -107,22 +110,32 @@ export async function recordPaymentAction(
 ): Promise<ActionState> {
   return runAction(async () => {
     const { ctx } = await actionContext(slug, "payments.record");
+    const raw = formObject(formData);
+    // The amount is in the invoice's currency (its own number of decimals).
+    const currency =
+      (await invoiceCurrency(db(), ctx.tenant.id, raw.id ?? "")) ?? ctx.tenant.settings.currency;
     const input = z
       .object({
         id: fields.id(),
-        amount: fields.money(ctx.tenant.settings.currency, { positive: true }),
+        amount: fields.money(currency, { positive: true }),
         date: fields.date(),
         accountId: fields.id(),
         method: fields.text(50),
         categoryId: fields.optionalId(),
+        fxRate: z
+          .string()
+          .regex(/^\d+(\.\d{1,8})?$/)
+          .or(z.literal(""))
+          .optional(),
       })
-      .parse(formObject(formData));
+      .parse(raw);
     await recordPayment(db(), ctx, input.id, {
       amountMinor: input.amount,
       date: input.date,
       accountId: input.accountId,
       method: input.method,
       categoryId: input.categoryId,
+      fxRate: input.fxRate || undefined,
     });
   });
 }
@@ -188,6 +201,40 @@ export async function toggleRecurringAction(
     const { id, active } = z
       .object({ id: fields.id(), active: z.enum(["true", "false"]) })
       .parse(formObject(formData));
-    await setRecurringActive(db(), ctx, id, active === "true");
+    await setRecurringActive(db(), ctx, id, active === "true", today(ctx.tenant.settings.timezone));
+  });
+}
+
+/** Sends an unpaid invoice to the client again, as a reminder. */
+export async function resendInvoiceAction(
+  slug: string,
+  _p: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  return runAction(async () => {
+    const { ctx } = await actionContext(slug, "invoices.write");
+    const delivery = await resendInvoice(db(), ctx, fields.id().parse(formObject(formData).id));
+    return t(
+      delivery === "portal"
+        ? "invoices.sentPortal"
+        : delivery === "email"
+          ? "invoices.sentEmail"
+          : "invoices.sentNobody",
+    );
+  });
+}
+
+export async function writeOffAction(
+  slug: string,
+  _p: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  return runAction(async () => {
+    const { ctx } = await actionContext(slug, "payments.record");
+    const input = z
+      .object({ id: fields.id(), reason: fields.text(200).default("") })
+      .parse(formObject(formData));
+    await writeOffBalance(db(), ctx, input.id, input.reason);
+    return t("invoices.writtenOffDone");
   });
 }

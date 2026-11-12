@@ -5,6 +5,7 @@ import { createClient } from "@/features/clients";
 import { createAccount } from "@/features/finance";
 import type { Database } from "@/server/db";
 import type { TenantContext } from "@/server/tenancy/context";
+import type { StripeApi } from "./service";
 
 vi.mock("@/server/mail", () => ({ sendMail: vi.fn(async () => true), appUrl: (p: string) => p }));
 
@@ -129,5 +130,82 @@ describe("online payments", () => {
     expect((await handleTenantWebhook(database, ctx.tenant.id, foreign.body, foreign.header)).note).toBe(
       "not paid",
     );
+  });
+});
+
+describe("Stripe fees and refunds", () => {
+  it("books the fee as an expense and reverses a fully refunded payment", async () => {
+    const { handleTenantWebhook } = await import("./service");
+    const { createInvoice, sendInvoice, getInvoice } = await import("@/features/invoices");
+    const { profitAndLoss } = await import("@/features/finance");
+    const id = await createInvoice(database, ctx, {
+      clientId: (await getInvoice(database, ctx.tenant.id, invoiceId))?.invoice.clientId ?? "",
+      issueDate: "2026-08-01",
+      dueDate: "2026-08-15",
+      items: [{ description: "Care plan", quantity: "1", unitPriceMinor: "10000", taxRateBp: 1000 }],
+      notes: "",
+      custom: {},
+    });
+    await sendInvoice(database, ctx, id);
+    const api = vi.fn(async (_key: string, path: string) => {
+      if (path.startsWith("payment_intents/"))
+        return { latest_charge: { balance_transaction: { fee: 330, currency: "aud" } } };
+      if (path === "checkout/sessions") return { data: [{ id: "cs_fee" }] };
+      throw new Error(`unexpected ${path}`);
+    }) as unknown as StripeApi;
+    const paidEvent = signed({
+      id: "evt_fee",
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: "cs_fee",
+          payment_status: "paid",
+          amount_total: 11_000,
+          currency: "aud",
+          payment_intent: "pi_fee",
+          metadata: { tenantId: ctx.tenant.id, invoiceId: id },
+        },
+      },
+    });
+    expect(
+      (await handleTenantWebhook(database, ctx.tenant.id, paidEvent.body, paidEvent.header, { api })).note,
+    ).toBe("recorded");
+    const pnl = await profitAndLoss(database, ctx.tenant.id, "2000-01-01", "2100-01-01");
+    expect(pnl.lines.find((l) => l.categoryName === "Payment processing fees")?.totalMinor).toBe(330n);
+
+    // Only part of the charge refunded (e.g. an overpayment's excess): flagged, never reversed,
+    // even when the refund is as large as what was applied to the invoice.
+    const excess = signed({
+      id: "evt_refund_part",
+      type: "charge.refunded",
+      data: {
+        object: {
+          id: "ch_1",
+          payment_intent: "pi_fee",
+          amount: 15_000,
+          amount_refunded: 11_000,
+          refunded: false,
+        },
+      },
+    });
+    expect(
+      (await handleTenantWebhook(database, ctx.tenant.id, excess.body, excess.header, { api })).note,
+    ).toBe("partial refund flagged");
+    expect((await getInvoice(database, ctx.tenant.id, id))?.invoice.status).toBe("paid");
+
+    const refund = signed({
+      id: "evt_refund",
+      type: "charge.refunded",
+      data: { object: { id: "ch_1", payment_intent: "pi_fee", amount_refunded: 11_000, refunded: true } },
+    });
+    expect(
+      (await handleTenantWebhook(database, ctx.tenant.id, refund.body, refund.header, { api })).note,
+    ).toBe("refund reversed");
+    const row = await getInvoice(database, ctx.tenant.id, id);
+    expect(row?.invoice).toMatchObject({ paidMinor: 0n, status: "sent" });
+    // A repeat of the refund event changes nothing.
+    expect(
+      (await handleTenantWebhook(database, ctx.tenant.id, refund.body, refund.header, { api })).note,
+    ).toBe("unknown or already reversed");
   });
 });

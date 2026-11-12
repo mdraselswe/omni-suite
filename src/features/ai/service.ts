@@ -1,7 +1,8 @@
 import "server-only";
 import { and, eq } from "drizzle-orm";
+import type { AiFeature } from "@/config";
 import { pipelineSummary } from "@/features/crm";
-import { listAccounts, monthlyTotals, profitAndLoss } from "@/features/finance";
+import { cashPosition, monthlyTotals, profitAndLoss, runway } from "@/features/finance";
 import { monthlyRecurring, receivables } from "@/features/invoices";
 import { listProjects, myDueTasks } from "@/features/projects";
 import { t } from "@/i18n";
@@ -9,6 +10,7 @@ import { addDays, addMonths, fiscalYearStart, monthStart, today } from "@/lib/da
 import { formatMoney } from "@/lib/money";
 import { UserError } from "@/server/action";
 import { aiConfigured } from "@/server/ai";
+import { latestRate } from "@/server/fx";
 import type { DbOrTx } from "@/server/db";
 import { clients } from "@/server/db/schema";
 import { hasPermission, isModuleEnabled, type TenantContext } from "@/server/tenancy/context";
@@ -23,9 +25,12 @@ import {
 } from "./prompts";
 import { runAi, type Completer } from "./run";
 
-/** Whether this member sees AI features at all (key set, module on, permission held). */
-export function canUseAi(ctx: TenantContext): boolean {
-  return aiConfigured() && hasPermission(ctx, "ai.use");
+/**
+ * Whether this member sees AI features (provider key set, module on, permission held).
+ * With a feature: whether that feature's provider is ready; without: whether any is.
+ */
+export function canUseAi(ctx: TenantContext, feature?: AiFeature): boolean {
+  return aiConfigured(feature) && hasPermission(ctx, "ai.use");
 }
 
 /* ─── Proposal draft ───────────────────────────────────────────── */
@@ -76,32 +81,40 @@ export async function businessSnapshot(database: DbOrTx, ctx: TenantContext): Pr
   const tenantId = ctx.tenant.id;
 
   if (hasPermission(ctx, "finance.read")) {
-    const [accounts, month, fy, spend] = await Promise.all([
-      listAccounts(database, tenantId),
+    const [position, month, fy, spend] = await Promise.all([
+      cashPosition(
+        database,
+        tenantId,
+        settings.currency,
+        async (foreign, base) => (await latestRate(foreign, base))?.rate ?? null,
+      ),
       profitAndLoss(database, tenantId, monthStart(now), now),
       profitAndLoss(database, tenantId, fiscalYearStart(now, settings.fiscalYearStartMonth), now),
       monthlyTotals(database, tenantId, monthStart(addMonths(now, -3)), addDays(monthStart(now), -1)),
     ]);
-    const cash = accounts
-      .filter((a) => a.currency === settings.currency)
-      .reduce((sum, a) => sum + a.balanceMinor, 0n);
-    const avgSpend = spend.reduce((sum, m) => sum + m.expenseMinor, 0n) / 3n;
+    const cash = position.totalMinor;
+    const burn = runway(cash, spend);
+    const avgSpend = burn.avgSpendMinor;
     facts.push(
-      { label: "Cash in accounts", value: money(cash) },
+      { label: "Cash in accounts (all currencies at today's rate)", value: money(cash) },
+      ...position.unconverted.map((u) => ({
+        label: `Also held in ${u.currency} (no rate today, not in the cash total)`,
+        value: formatMoney(u.minor, u.currency, settings.locale),
+      })),
       { label: "Income this month", value: money(month.incomeMinor) },
       { label: "Spending this month", value: money(month.expenseMinor) },
       { label: "Profit this month", value: money(month.profitMinor) },
       { label: "Profit this financial year", value: money(fy.profitMinor) },
-      { label: "Average monthly spending (last 3 months)", value: money(avgSpend) },
+      { label: `Average monthly spending (last ${Math.max(burn.months, 1)} months)`, value: money(avgSpend) },
       {
         label: "Cash runway",
-        value: avgSpend > 0n ? `${Number((cash * 10n) / avgSpend) / 10} months` : "no recent spending",
+        value: burn.runway !== null ? `${burn.runway} months` : "no recent spending",
       },
     );
   }
   if (hasPermission(ctx, "invoices.read")) {
     const [owed, mrr] = await Promise.all([
-      receivables(database, tenantId, now),
+      receivables(database, tenantId, now, settings.currency),
       monthlyRecurring(database, ctx),
     ]);
     facts.push(

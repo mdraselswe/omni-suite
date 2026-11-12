@@ -5,10 +5,13 @@ import { t } from "@/i18n";
 import { parsePercentBp } from "@/lib/money";
 import { fields, formObject, runAction, UserError, type ActionState } from "@/server/action";
 import { actionContext, requirePlatformAdmin, requireTenant } from "@/server/auth/session";
-import { SIDEBAR_STYLES, THEME_PRESETS } from "@/config";
+import { regionalConfig, SIDEBAR_STYLES, THEME_PRESETS } from "@/config";
 import { serverEnv } from "@/config/env";
+import { isFormattableLocale, isSupportedCurrency, isSupportedTimeZone } from "@/lib/intl-options";
 import { HEX_COLOR } from "@/lib/theme";
 import { db } from "@/server/db";
+import { replanReminders } from "@/features/invoices";
+import { today } from "@/lib/dates";
 import { markAllRead } from "@/server/shared";
 import { clearHostCache } from "@/server/tenancy/hosts";
 import {
@@ -32,13 +35,22 @@ export async function updateGeneralAction(
 ): Promise<ActionState> {
   return runAction(async () => {
     const { ctx } = await actionContext(slug, "settings.manage");
+    const s = ctx.tenant.settings;
+    // A saved value stays valid even if it isn't on today's list (an older alias or format).
+    const listed = (ok: (v: string) => boolean, saved: string) => (v: string) => v === saved || ok(v);
     const input = z
       .object({
         name: fields.required(120),
         displayName: fields.text(120),
-        currency: z.string().trim().toUpperCase().length(3),
-        timezone: fields.required(60),
-        locale: fields.required(20),
+        currency: z.string().trim().refine(listed(isSupportedCurrency, s.currency), t("locale.badCurrency")),
+        timezone: z.string().trim().refine(listed(isSupportedTimeZone, s.timezone), t("locale.badTimezone")),
+        locale: z
+          .string()
+          .trim()
+          .refine(
+            listed((v) => regionalConfig.locales.includes(v) && isFormattableLocale(v), s.locale),
+            t("locale.badFormat"),
+          ),
         taxName: fields.required(20),
         taxRate: fields.required(10),
         pricesIncludeTax: fields.checkbox(),
@@ -48,8 +60,28 @@ export async function updateGeneralAction(
         proposalPrefix: fields.text(10),
         paymentTermsDays: fields.int(0, 365),
         invoiceFooter: fields.text(2000),
+        replyToEmail: fields.email(),
+        remindersEnabled: fields.checkbox(),
+        reminderDaysBefore: fields.int(0, 60),
+        // "1, 7, 14": days after the due date.
+        reminderDaysAfter: z
+          .string()
+          .trim()
+          .regex(/^(\d{1,3}(\s*,\s*\d{1,3}){0,5})?$/, t("settings.reminderDaysInvalid")),
       })
       .parse(formObject(formData));
+    const reminders = {
+      enabled: input.remindersEnabled,
+      daysBefore: input.reminderDaysBefore,
+      daysAfter: [
+        ...new Set(
+          input.reminderDaysAfter
+            .split(",")
+            .map((d) => Number(d.trim()))
+            .filter((d) => Number.isInteger(d) && d >= 1 && d <= 365),
+        ),
+      ].sort((a, b) => a - b),
+    };
     const rateBp = parsePercentBp(input.taxRate);
     if (rateBp === null) throw new UserError(t("form.percent"));
     try {
@@ -57,7 +89,6 @@ export async function updateGeneralAction(
     } catch {
       throw new UserError(t("form.invalid"));
     }
-    const s = ctx.tenant.settings;
     await updateSettings(db(), ctx, {
       name: input.name,
       settings: {
@@ -75,9 +106,17 @@ export async function updateGeneralAction(
         proposalPrefix: input.proposalPrefix,
         paymentTermsDays: input.paymentTermsDays,
         invoiceFooter: input.invoiceFooter,
+        replyToEmail: input.replyToEmail,
+        reminders,
         branding: { ...s.branding, displayName: input.displayName },
       },
     });
+    // Unpaid invoices follow the new reminder days from now on.
+    await replanReminders(
+      db(),
+      { ...ctx.tenant, settings: { ...ctx.tenant.settings, reminders } },
+      today(input.timezone),
+    );
   });
 }
 

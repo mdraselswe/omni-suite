@@ -2,6 +2,7 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { createClient } from "@/features/clients";
 import { createAccount, listAccounts } from "@/features/finance";
+import { parsePage } from "@/lib/pagination";
 import type { Database } from "@/server/db";
 import type { TenantContext } from "@/server/tenancy/context";
 
@@ -143,5 +144,60 @@ describe("invoices", () => {
     const row = await getInvoice(database, ctx.tenant.id, inv);
     expect(row?.invoice.status).toBe("draft");
     expect(row?.invoice.totalMinor).toBe(110000n);
+  });
+});
+
+describe("invoice list pages and search", () => {
+  it("pages newest first with a total, and finds by number or client name", async () => {
+    const { createInvoice, countInvoices, getInvoice, pageInvoices } = await import("./service");
+    const { setupTenant } = await import("@/server/testing/db");
+    const { ctx: own } = await setupTenant(database, "inv-pages");
+    const bakery = await createClient(database, own, {
+      name: "Bright 100% Bakery",
+      email: "",
+      phone: "",
+      website: "",
+      address: "",
+      notes: "",
+      status: "active",
+      custom: {},
+    });
+    const ids: string[] = [];
+    for (let day = 1; day <= 7; day++) {
+      ids.push(
+        await createInvoice(database, own, {
+          clientId: bakery,
+          issueDate: `2026-03-0${day}`,
+          dueDate: "2026-04-30",
+          items: [item],
+          notes: "",
+          custom: {},
+        }),
+      );
+    }
+    const newestFirst = [...ids].reverse();
+    const size3 = (page: number) => parsePage({ page: String(page), size: "3" }, { sizes: [3] });
+
+    const first = await pageInvoices(database, own.tenant.id, {}, size3(1));
+    expect(first.total).toBe(7);
+    expect(first.rows.map((r) => r.invoice.id)).toEqual(newestFirst.slice(0, 3));
+    const last = await pageInvoices(database, own.tenant.id, {}, size3(3));
+    expect(last.rows.map((r) => r.invoice.id)).toEqual(newestFirst.slice(6));
+    // Past the end: the last page instead of nothing.
+    const beyond = await pageInvoices(database, own.tenant.id, {}, size3(40));
+    expect(beyond.page).toBe(3);
+    expect(beyond.rows).toHaveLength(1);
+
+    const third = await getInvoice(database, own.tenant.id, ids[2] ?? "");
+    const number = third?.invoice.number ?? "missing";
+    const byNumber = await pageInvoices(database, own.tenant.id, { q: number.toLowerCase() }, size3(1));
+    expect(byNumber.rows.map((r) => r.invoice.id)).toEqual([ids[2]]);
+    expect(await countInvoices(database, own.tenant.id, { q: "bright bakery" })).toBe(7);
+    expect(await countInvoices(database, own.tenant.id, { q: "100%" })).toBe(7);
+    expect(await countInvoices(database, own.tenant.id, { q: "1_0" })).toBe(0);
+    expect(await countInvoices(database, own.tenant.id, { q: "bakery nobody" })).toBe(0);
+    // Other tenants' invoices never show up.
+    expect(await countInvoices(database, own.tenant.id, { q: "Acme" })).toBe(0);
+    expect(await countInvoices(database, ctx.tenant.id, { q: "bakery" })).toBe(0);
   });
 });

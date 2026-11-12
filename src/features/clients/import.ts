@@ -7,6 +7,8 @@ import type { ClientInput } from "./service";
 export const clientSchema = z.object({
   name: fields.required(200),
   email: fields.email(),
+  contactName: fields.text(200),
+  billingEmail: fields.email(),
   phone: fields.text(50),
   website: fields.text(300),
   address: fields.text(500),

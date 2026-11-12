@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { AiFeature } from "@/config";
 import type { LineItem } from "@/lib/line-items";
 import { parseMoney } from "@/lib/money";
 
@@ -9,6 +10,8 @@ import { parseMoney } from "@/lib/money";
  */
 
 export type Prompt = {
+  /** Which feature asks; picks the provider and model (src/config/ai.ts). */
+  feature: AiFeature;
   system: string;
   prompt: string;
   /** JSON schema the answer must follow. */
@@ -73,6 +76,7 @@ export function proposalDraftPrompt(input: ProposalDraftInput): Prompt {
     ? `Prices include ${input.taxName}.`
     : `Prices exclude ${input.taxName}.`;
   return {
+    feature: "proposalDraft",
     system:
       `You help ${input.businessName} write sales proposals. ${SHARED_RULES} ` +
       "Line item prices are estimates the business will review, so keep them realistic and round.",
@@ -150,6 +154,7 @@ const INSIGHTS_SCHEMA = {
 
 export function insightsPrompt(snapshot: BusinessSnapshot): Prompt {
   return {
+    feature: "insights",
     system:
       "You are a practical small-business advisor reading a dashboard. " +
       `${SHARED_RULES} Base every point on the numbers given; if data is missing, say what to track.`,

@@ -118,9 +118,9 @@ describe("daily limit", () => {
     const { aiUsageOn } = await import("./usage");
     const { today } = await import("@/lib/dates");
     const day = today(ctx.tenant.settings.timezone);
-    const request: Prompt = { system: "s", prompt: "p", schema: {} };
+    const request: Prompt = { feature: "insights", system: "s", prompt: "p", schema: {} };
 
-    const ok = vi.fn(async () => ({ text: '{"a":1}', inputTokens: 10, outputTokens: 5 }));
+    const ok = vi.fn(async () => ({ text: '{"a":1}', inputTokens: 10, outputTokens: 5, model: "fake" }));
     await expect(runAi(database, ctx, request, (text) => JSON.parse(text) as unknown, ok)).resolves.toEqual({
       a: 1,
     });
@@ -141,5 +141,51 @@ describe("daily limit", () => {
     // A usable call whose answer can't be parsed still counts (the tokens were spent).
     await expect(runAi(database, ctx, request, () => null, ok)).rejects.toThrow(/usable answer/);
     expect((await aiUsageOn(database, ctx.tenant.id, day)).requests).toBe(2);
+  });
+});
+
+describe("member cap and plan gate", () => {
+  let database: Database;
+  let ctx: TenantContext;
+  const request: Prompt = { feature: "insights", system: "s", prompt: "p", schema: {} };
+  const ok = async () => ({ text: '{"a":1}', inputTokens: 1, outputTokens: 1, model: "fake" });
+
+  beforeAll(async () => {
+    const { createTestDb, setupTenant } = await import("@/server/testing/db");
+    database = await createTestDb();
+    ({ ctx } = await setupTenant(database, "aicap"));
+  });
+
+  it("stops one member at their own daily cap, whatever the business allowance", async () => {
+    const { aiConfig } = await import("@/config");
+    const { runAi } = await import("./run");
+    const { aiUsageOn } = await import("./usage");
+    const { rateCounters } = await import("@/server/db/schema");
+    const { today } = await import("@/lib/dates");
+    const { DAY_MS } = await import("@/server/rate-limit");
+    await database.insert(rateCounters).values({
+      key: `ai:user:${ctx.user.id}`,
+      bucket: String(Math.floor(Date.now() / DAY_MS)),
+      count: aiConfig.dailyRequestsPerMember,
+      expiresAt: new Date(Date.now() + DAY_MS),
+    });
+    await expect(runAi(database, ctx, request, (text) => text, ok)).rejects.toThrow(/your .* AI requests/i);
+    // The business allowance wasn't touched.
+    expect((await aiUsageOn(database, ctx.tenant.id, today(ctx.tenant.settings.timezone))).requests).toBe(0);
+  });
+
+  it("gives the member's request back when the business limit is reached", async () => {
+    const { runAi } = await import("./run");
+    const { reserveAiRequest } = await import("./usage");
+    const { used, DAY_MS } = await import("@/server/rate-limit");
+    const { setupTenant } = await import("@/server/testing/db");
+    const { today } = await import("@/lib/dates");
+    const { aiConfig } = await import("@/config");
+    const { ctx: other } = await setupTenant(database, "aicap2");
+    const day = today(other.tenant.settings.timezone);
+    // Use up the business's whole allowance (self-hosted default: billing is off in tests).
+    while (await reserveAiRequest(database, other.tenant.id, day, aiConfig.dailyRequestsPerBusiness));
+    await expect(runAi(database, other, request, (text) => text, ok)).rejects.toThrow(/business has used/);
+    expect(await used(database, { key: `ai:user:${other.user.id}`, windowMs: DAY_MS })).toBe(0);
   });
 });

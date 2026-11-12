@@ -64,6 +64,46 @@ describe("custom domain claims", () => {
   });
 });
 
+describe("business currency", () => {
+  it("can change until money is recorded, then is locked", async () => {
+    const { setupTenant } = await import("@/server/testing/db");
+    const { buildTenantContext } = await import("@/server/tenancy/service");
+    const { moneyRecorded, updateSettings } = await import("./service");
+    const { createTransaction, listAccounts } = await import("@/features/finance");
+    const { ctx, ownerId } = await setupTenant(database, "charlie");
+    const fresh = async () => {
+      const r = await buildTenantContext(database, "charlie", ownerId, false);
+      if (!r.ok) throw new Error("context failed");
+      return r.ctx;
+    };
+
+    expect(await moneyRecorded(database, ctx.tenant.id)).toBe(false);
+    await updateSettings(database, ctx, { settings: { currency: "BDT" } });
+    const bdt = await fresh();
+    expect(bdt.tenant.settings.currency).toBe("BDT");
+
+    const [cash] = await listAccounts(database, ctx.tenant.id);
+    if (!cash) throw new Error("no cash account");
+    await createTransaction(database, bdt, {
+      kind: "expense",
+      accountId: cash.id,
+      date: "2026-07-01",
+      description: "Tea",
+      amountMinor: 5000n,
+      fxRate: "0.0127",
+    });
+    expect(await moneyRecorded(database, ctx.tenant.id)).toBe(true);
+    await expect(updateSettings(database, bdt, { settings: { currency: "AUD" } })).rejects.toThrow(
+      /can't change/,
+    );
+    // Other settings still save, and resending the same currency is fine.
+    await updateSettings(database, bdt, { settings: { currency: "BDT", timezone: "Asia/Dhaka" } });
+    expect((await fresh()).tenant.settings).toMatchObject({ currency: "BDT", timezone: "Asia/Dhaka" });
+    // Another business is unaffected.
+    expect(await moneyRecorded(database, b.tenant.id)).toBe(false);
+  });
+});
+
 describe("custom fields", () => {
   it("edits label, choices and required, and keeps the key and type", async () => {
     const { addCustomField, listCustomFields, updateCustomField } = await import("./service");

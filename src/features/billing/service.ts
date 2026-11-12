@@ -1,6 +1,6 @@
 import "server-only";
 import { and, count, eq, gt, isNull } from "drizzle-orm";
-import { billing, type PlanKey } from "@/config";
+import { aiConfig, billing, type PlanKey } from "@/config";
 import { serverEnv } from "@/config/env";
 import { t } from "@/i18n";
 import { UserError } from "@/server/action";
@@ -78,6 +78,18 @@ export async function memberLimit(
   const view = await billingView(database, tenant);
   const plan = (view.live ? planDef(tenant.plan) : null) ?? billing.plans[0];
   return plan?.maxMembers ?? null;
+}
+
+/**
+ * AI requests the business may make per day: its plan's allowance (the first plan's
+ * while it has no live subscription; 0 = AI not in the plan), or the self-hosted
+ * default from src/config/ai.ts when billing is off.
+ */
+export async function aiDailyLimit(database: DbOrTx, tenant: { id: string; plan: string }): Promise<number> {
+  if (!billingConfigured()) return aiConfig.dailyRequestsPerBusiness;
+  const view = await billingView(database, tenant);
+  const plan = (view.live ? planDef(tenant.plan) : null) ?? billing.plans[0];
+  return plan?.aiDailyRequests ?? 0;
 }
 
 /** Throws when inviting one more team member would go over the plan's limit. */

@@ -3,7 +3,9 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { addDays } from "@/lib/dates";
 import type { Database } from "@/server/db";
 import type { TenantContext } from "@/server/tenancy/context";
-import { hoursQuantity, timeInvoiceLines } from "./time-invoice";
+import { taskProgress } from "./progress";
+import { parseTemplateTasks, templateTaskLine } from "./template-tasks";
+import { hoursQuantity, timeInvoiceLines, timeValue } from "./time-invoice";
 
 vi.mock("@/server/mail", () => ({ sendMail: vi.fn(async () => true), appUrl: (p: string) => p }));
 
@@ -93,6 +95,14 @@ describe("time invoice lines", () => {
       { description: "Person b", quantity: "0.5", unitPriceMinor: "8000", taxRateBp: 1000 },
       { description: "Person a", quantity: "1", unitPriceMinor: "12000", taxRateBp: 1000 },
     ]);
+  });
+
+  it("bills awkward minutes at the exact amount, matching the unbilled value", () => {
+    const entries = [{ membershipId: "a", minutes: 20, hourlyRateMinor: 100_00n }];
+    const [line] = timeInvoiceLines(entries, { taxRateBp: 0, describe: () => "Sam" });
+    // 20 min at $100/h is $33.33, not 0.333 h × $100 = $33.30.
+    expect(line).toMatchObject({ description: "Sam · 0.333 h", quantity: "1", unitPriceMinor: "3333" });
+    expect(timeValue(entries)).toBe(3333n);
   });
 });
 
@@ -297,5 +307,139 @@ describe("templates and rates", () => {
     expect(actions).toEqual(
       expect.arrayContaining(["projectTemplate.save", "projectTemplate.delete", "member.rate"]),
     );
+  });
+});
+
+describe("template approval tasks", () => {
+  it("reads flags from template lines and writes them back", () => {
+    expect(
+      parseTemplateTasks("Kickoff\nWireframes | client\nDesign sign-off | approval\n  \n| client"),
+    ).toEqual([
+      { title: "Kickoff", clientVisible: false, needsApproval: false },
+      { title: "Wireframes", clientVisible: true, needsApproval: false },
+      { title: "Design sign-off", clientVisible: true, needsApproval: true },
+    ]);
+    expect(parseTemplateTasks("Launch | Client, Approval")[0]).toMatchObject({ needsApproval: true });
+    expect(templateTaskLine({ title: "A", clientVisible: true, needsApproval: true })).toBe("A | approval");
+    expect(templateTaskLine({ title: "B", clientVisible: true })).toBe("B | client");
+    expect(templateTaskLine({ title: "C", clientVisible: false })).toBe("C");
+  });
+
+  it("copies needs-approval (and client-visible) into projects made from the template", async () => {
+    const { tasks } = await import("@/server/db/schema");
+    const { eq } = await import("drizzle-orm");
+    const { createProject, saveProjectTemplate } = await import("./service");
+    const templateId = await saveProjectTemplate(database, ctx, {
+      id: null,
+      name: "Site",
+      tasks: [
+        { title: "Internal prep", clientVisible: false },
+        { title: "Sign-off", clientVisible: false, needsApproval: true },
+      ],
+    });
+    const id = await createProject(database, ctx, { ...base, name: "From template", clientId, templateId });
+    const rows = await database.select().from(tasks).where(eq(tasks.projectId, id));
+    expect(rows.find((r) => r.title === "Sign-off")).toMatchObject({
+      needsApproval: true,
+      clientVisible: true,
+    });
+    expect(rows.find((r) => r.title === "Internal prep")).toMatchObject({
+      needsApproval: false,
+      clientVisible: false,
+    });
+  });
+});
+
+describe("client progress and approval", () => {
+  it("counts only client-visible tasks in the portal's progress", async () => {
+    const { createProject, createTask, listProjects } = await import("./service");
+    const id = await createProject(database, ctx, { ...base, name: "Progress", clientId });
+    await createTask(database, ctx, "all", id, {
+      ...task,
+      title: "Shared",
+      needsApproval: false,
+      status: "done",
+    });
+    await createTask(database, ctx, "all", id, { ...task, title: "Shared 2", needsApproval: false });
+    await createTask(database, ctx, "all", id, { ...task, title: "Internal", clientVisible: false });
+    await createTask(database, ctx, "all", id, {
+      ...task,
+      title: "Internal 2",
+      clientVisible: false,
+      status: "done",
+    });
+    const staffView = (await listProjects(database, ctx, "all")).find((p) => p.id === id);
+    const clientView = (await listProjects(database, portal, "all")).find((p) => p.id === id);
+    expect(staffView).toMatchObject({ taskCount: 4, doneCount: 2 });
+    expect(clientView).toMatchObject({ taskCount: 2, doneCount: 1 });
+    expect(taskProgress([{ status: "done" }, { status: "todo" }, { status: "review" }])).toEqual({
+      done: 1,
+      total: 3,
+      percent: 33,
+    });
+    expect(taskProgress([])).toEqual({ done: 0, total: 0, percent: 0 });
+  });
+
+  it("approves only tasks waiting for review, once, and tells the assignee", async () => {
+    const { notifications, tasks } = await import("@/server/db/schema");
+    const { eq } = await import("drizzle-orm");
+    const { approveTask, createTask, updateTask } = await import("./service");
+    const id = await createTask(database, ctx, "all", project, {
+      ...task,
+      title: "Moodboard",
+      assigneeMembershipId: staff.membershipId,
+    });
+    await expect(approveTask(database, portal, id)).rejects.toThrow("not waiting for review");
+    await updateTask(database, ctx, "all", id, { status: "review" });
+    await expect(approveTask(database, ctx, id)).rejects.toThrow();
+    await approveTask(database, portal, id);
+    const [row] = await database.select().from(tasks).where(eq(tasks.id, id));
+    expect(row?.status).toBe("done");
+    expect(row?.approvedAt).not.toBeNull();
+    await expect(approveTask(database, portal, id)).rejects.toThrow();
+    const inbox = await database.select().from(notifications).where(eq(notifications.userId, staff.userId));
+    expect(inbox.some((n) => n.title.includes("Moodboard"))).toBe(true);
+  });
+});
+
+describe("comment notifications", () => {
+  async function mailsTo(userId: string) {
+    const { jobs, user } = await import("@/server/db/schema");
+    const { eq } = await import("drizzle-orm");
+    const [u] = await database.select({ email: user.email }).from(user).where(eq(user.id, userId));
+    const all = await database.select().from(jobs).where(eq(jobs.type, "mail.send"));
+    return all.filter((j) => (j.payload as { to?: string }).to === u?.email);
+  }
+
+  it("emails the project team when a client comments, and the client when staff share a comment", async () => {
+    const { addComment } = await import("./service");
+    const { memberships } = await import("@/server/db/schema");
+    const { eq } = await import("drizzle-orm");
+    const before = (await mailsTo(staff.userId)).length;
+    await addComment(database, portal, { projectId: project, body: "Looks great", clientVisible: false });
+    expect((await mailsTo(staff.userId)).length).toBe(before + 1);
+
+    const [clientMember] = await database
+      .select({ userId: memberships.userId })
+      .from(memberships)
+      .where(eq(memberships.id, portal.membership.id));
+    if (!clientMember) throw new Error("no client member");
+    const clientBefore = (await mailsTo(clientMember.userId)).length;
+    await addComment(database, ctx, { projectId: project, body: "Internal only", clientVisible: false });
+    expect((await mailsTo(clientMember.userId)).length).toBe(clientBefore);
+    await addComment(database, ctx, { projectId: project, body: "Draft is ready", clientVisible: true });
+    expect((await mailsTo(clientMember.userId)).length).toBe(clientBefore + 1);
+  });
+
+  it("falls back to people who manage projects when the project has no team", async () => {
+    const { addComment, createProject, setProjectMember } = await import("./service");
+    const id = await createProject(database, ctx, { ...base, name: "No team", clientId });
+    await setProjectMember(database, ctx, { projectId: id, membershipId: ctx.membership.id, add: false });
+    const before = (await mailsTo(ctx.user.id)).length;
+    const managerBefore = (await mailsTo(manager.userId)).length;
+    await addComment(database, portal, { projectId: id, body: "Anyone there?", clientVisible: false });
+    expect((await mailsTo(ctx.user.id)).length).toBe(before + 1);
+    // The manager role can change projects too.
+    expect((await mailsTo(manager.userId)).length).toBeGreaterThanOrEqual(managerBefore);
   });
 });

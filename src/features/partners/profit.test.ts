@@ -4,6 +4,8 @@ import {
   combineResults,
   holdingsFromPercentages,
   issueUnitsForInvestment,
+  MICRO_MONTH,
+  monthsCovered,
   profitRuleSchema,
   splitPeriod,
   transferUnits,
@@ -164,5 +166,29 @@ describe("ownership", () => {
     expect(splitPeriod("2026-01-01", "2026-01-31", ["2025-12-01", "2026-03-01"])).toEqual([
       ["2026-01-01", "2026-01-31"],
     ]);
+  });
+});
+
+describe("monthly fees and empty periods", () => {
+  it("counts whole months exactly and part months by days", () => {
+    expect(monthsCovered("2026-01-01", "2026-01-31")).toBe(MICRO_MONTH);
+    expect(monthsCovered("2026-01-01", "2026-03-31")).toBe(3n * MICRO_MONTH);
+    // 14 of February's 28 days.
+    expect(monthsCovered("2026-02-01", "2026-02-14")).toBe(MICRO_MONTH / 2n);
+    expect(monthsCovered("2026-03-10", "2026-03-01")).toBe(0n);
+  });
+
+  it("pays a monthly fee for each month a distribution covers", () => {
+    const withFee = rule({ type: "ownership_units" }, { fees: [{ partnerId: "B", amountMinor: "100000" }] });
+    const quarter = calculateProfit({ ...base, rule: withFee, feeMonths: 3n * MICRO_MONTH });
+    expect(quarter.feesMinor).toBe(300_000n);
+    const halfMonth = calculateProfit({ ...base, rule: withFee, feeMonths: MICRO_MONTH / 2n });
+    expect(halfMonth.feesMinor).toBe(50_000n);
+  });
+
+  it("keeps a period's profit as reserve when no partner was in it", () => {
+    const r = calculateProfit({ ...base, partners: [], rule: rule({ type: "ownership_units" }) });
+    expect(r.reserveMinor).toBe(r.profitMinor);
+    expect(r.lines).toEqual([]);
   });
 });

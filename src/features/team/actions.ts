@@ -14,6 +14,7 @@ import {
   createRole,
   deleteRole,
   removeOverride,
+  resendInvitation,
   resetRole,
   revokeInvitation,
   setMemberRoles,
@@ -50,6 +51,20 @@ export async function revokeInvitationAction(
   return runAction(async () => {
     const { ctx } = await actionContext(slug, "members.invite");
     await revokeInvitation(db(), ctx, fields.id().parse(formObject(formData).id));
+    return t("access.invite.revoked");
+  });
+}
+
+/** Emails a pending or expired invitation again with a fresh link (the old one stops working). */
+export async function resendInvitationAction(
+  slug: string,
+  _p: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  return runAction(async () => {
+    const { ctx } = await actionContext(slug, "members.invite");
+    await resendInvitation(db(), ctx, fields.id().parse(formObject(formData).id));
+    return t("access.invite.resent");
   });
 }
 

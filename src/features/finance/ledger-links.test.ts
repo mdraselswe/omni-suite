@@ -119,6 +119,30 @@ describe("ledger links", () => {
     await expect(createTransaction(database, ctx, { ...base, fxRate: "1.5" })).resolves.toBeTypeOf("string");
   });
 
+  it("converts between currencies with different decimals (¥ → A$)", async () => {
+    const { createAccount, createTransaction } = await import("./service");
+    const { transactions } = await import("@/server/db/schema");
+    const yen = await createAccount(database, ctx, {
+      name: "Yen",
+      type: "wallet",
+      currency: "JPY",
+      openingBalanceMinor: 0n,
+    });
+    const id = await createTransaction(database, ctx, {
+      kind: "expense",
+      accountId: yen,
+      date: "2026-07-06",
+      description: "Domain",
+      amountMinor: 1000n,
+      fxRate: "0.0105",
+    });
+    const [row] = await database
+      .select({ base: transactions.baseAmountMinor })
+      .from(transactions)
+      .where(eq(transactions.id, id));
+    expect(row?.base).toBe(1050n);
+  });
+
   it("reversing a capital contribution takes it off the partner's capital", async () => {
     const { createPartner, recordCapital, listPartners } = await import("@/features/partners");
     const { reverseTransaction } = await import("./service");

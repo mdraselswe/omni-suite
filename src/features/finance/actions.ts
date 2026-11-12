@@ -3,9 +3,11 @@
 import { z } from "zod";
 import { t } from "@/i18n";
 import { today } from "@/lib/dates";
+import { isSupportedCurrency } from "@/lib/intl-options";
 import { fields, formObject, runAction, type ActionState } from "@/server/action";
 import { actionContext } from "@/server/auth/session";
 import { db } from "@/server/db";
+import { latestRate, type FxQuote } from "@/server/fx";
 import {
   closePeriod,
   createAccount,
@@ -31,6 +33,8 @@ export async function createTransactionAction(
     // Amounts are in the account's currency (its own number of decimals), not the base currency.
     const currency =
       (await accountCurrency(db(), ctx.tenant.id, raw.accountId ?? "")) ?? ctx.tenant.settings.currency;
+    const toCurrency =
+      (raw.toAccountId ? await accountCurrency(db(), ctx.tenant.id, raw.toAccountId) : null) ?? currency;
     const input = z
       .object({
         kind: z.enum(TX_KINDS as [string, ...string[]]),
@@ -42,6 +46,8 @@ export async function createTransactionAction(
         date: fields.date(),
         description: fields.text(300),
         amount: fields.money(currency, { positive: true }),
+        tax: fields.money(currency, { optional: true }).optional(),
+        toAmount: fields.money(toCurrency, { optional: true }).optional(),
         fxRate: z
           .string()
           .regex(/^\d+(\.\d{1,8})?$/)
@@ -59,9 +65,22 @@ export async function createTransactionAction(
       date: input.date,
       description: input.description,
       amountMinor: input.amount,
+      taxMinor: input.tax ?? 0n,
+      toAmountMinor: input.toAmount || undefined,
       fxRate: input.fxRate || undefined,
     });
   });
+}
+
+/**
+ * Today's market rate from `currency` to the business currency, for the
+ * transaction form. Only the two currency codes leave the server. Null when the
+ * provider is off or down; the user then types the rate.
+ */
+export async function todaysRateAction(slug: string, currency: string): Promise<FxQuote | null> {
+  const { ctx } = await actionContext(slug, "finance.write");
+  if (!isSupportedCurrency(currency)) return null;
+  return latestRate(currency, ctx.tenant.settings.currency);
 }
 
 export async function reverseTransactionAction(
@@ -92,8 +111,9 @@ export async function createAccountAction(
       .object({
         name: fields.required(80),
         type: z.enum(["bank", "cash", "wallet", "card"]),
-        currency: z.string().regex(/^[A-Z]{3}$/),
-        opening: fields.money(currency, { optional: true }),
+        currency: z.string().refine(isSupportedCurrency, t("locale.badCurrency")),
+        // A card or overdrawn account can start below zero.
+        opening: fields.money(currency, { optional: true, allowNegative: true }),
       })
       .parse({ ...raw, currency });
     await createAccount(db(), ctx, {

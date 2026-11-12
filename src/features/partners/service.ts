@@ -1,7 +1,8 @@
 import "server-only";
-import { and, asc, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { t } from "@/i18n";
 import { sum } from "@/lib/money";
+import { paginate, type PageRequest } from "@/lib/pagination";
 import { UserError } from "@/server/action";
 import { audit, markChanged, toJsonSafe } from "@/server/audit";
 import type { Database, DbOrTx } from "@/server/db";
@@ -19,12 +20,13 @@ import {
 } from "@/server/db/schema";
 import { notify } from "@/server/shared";
 import type { TenantContext } from "@/server/tenancy/context";
-import { insertTransaction, profitAndLoss, totalOfKind } from "@/features/finance";
+import { assertOpenDate, insertTransaction, profitAndLoss, totalOfKind } from "@/features/finance";
 import {
   calculateProfit,
   combineResults,
   holdingsFromPercentages,
   issueUnitsForInvestment,
+  monthsCovered,
   profitRuleSchema,
   splitPeriod,
   transferUnits,
@@ -198,9 +200,12 @@ async function insertCapital(
     amountMinor: bigint;
     description: string;
     accountId: string | null;
+    /** The investment event these units came from, if any. */
+    ownershipEventId?: string | null;
   },
 ): Promise<void> {
   const partner = await assertPartner(tx, ctx.tenant.id, input.partnerId);
+  await assertOpenDate(tx, ctx.tenant.id, input.date);
   let transactionId: string | null = null;
   if (input.kind === "cash" && input.accountId) {
     transactionId = await insertTransaction(tx, ctx, {
@@ -212,6 +217,13 @@ async function insertCapital(
       partnerId: input.partnerId,
     });
   }
+  // Capital is kept in the base currency (the ledger row has the converted amount).
+  const [ledger] = transactionId
+    ? await tx
+        .select({ baseAmountMinor: transactions.baseAmountMinor })
+        .from(transactions)
+        .where(eq(transactions.id, transactionId))
+    : [];
   const [row] = await tx
     .insert(capitalContributions)
     .values({
@@ -219,9 +231,10 @@ async function insertCapital(
       partnerId: input.partnerId,
       date: input.date,
       kind: input.kind,
-      amountMinor: input.amountMinor,
+      amountMinor: ledger?.baseAmountMinor ?? input.amountMinor,
       description: input.description,
       transactionId,
+      ownershipEventId: input.ownershipEventId ?? null,
       createdBy: ctx.user.id,
     })
     .returning({ id: capitalContributions.id });
@@ -272,7 +285,8 @@ async function applyOwnership(
     note: string;
   },
   holdings: readonly Holding[],
-): Promise<void> {
+): Promise<string> {
+  await assertOpenDate(tx, ctx.tenant.id, event.date);
   const [ev] = await tx
     .insert(ownershipEvents)
     .values({
@@ -310,6 +324,7 @@ async function applyOwnership(
     data: { date: event.date, holdings },
   });
   await markChanged(tx, ctx.tenant.id, "ownership", ev.id);
+  return ev.id;
 }
 
 async function assertAfterLast(tx: DbOrTx, tenantId: string, date: string) {
@@ -365,7 +380,7 @@ export async function recordInvestment(
     await assertPartner(tx, ctx.tenant.id, input.partnerId);
     await assertAfterLast(tx, ctx.tenant.id, input.date);
     const { after } = await previewInvestment(tx, ctx.tenant.id, input);
-    await applyOwnership(
+    const eventId = await applyOwnership(
       tx,
       ctx,
       {
@@ -387,6 +402,7 @@ export async function recordInvestment(
       amountMinor: input.investmentMinor,
       description: t("partners.event.investment"),
       accountId: input.accountId,
+      ownershipEventId: eventId,
     });
   });
 }
@@ -696,6 +712,7 @@ export async function computeDistribution(
       expenseMinor: pnl.expenseMinor,
       partners: inputs,
       rule: rule.config,
+      feeMonths: monthsCovered(start, end),
     });
     segments.push({ start, end, ruleId: rule.id, ruleVersion: rule.version, result });
   }
@@ -848,17 +865,47 @@ export type StoredResult = {
   partnerNames: Record<string, string>;
 };
 
+function distributionRow(r: typeof distributionRuns.$inferSelect) {
+  return {
+    ...r,
+    result: r.result as StoredResult,
+    segmentCount: ((r.inputs as { segments?: unknown[] }).segments ?? []).length,
+  };
+}
+
 export async function listDistributions(database: DbOrTx, tenantId: string) {
   const rows = await database
     .select()
     .from(distributionRuns)
     .where(eq(distributionRuns.tenantId, tenantId))
-    .orderBy(desc(distributionRuns.periodStart), desc(distributionRuns.createdAt));
-  return rows.map((r) => ({
-    ...r,
-    result: r.result as StoredResult,
-    segmentCount: ((r.inputs as { segments?: unknown[] }).segments ?? []).length,
-  }));
+    .orderBy(desc(distributionRuns.periodStart), desc(distributionRuns.createdAt), desc(distributionRuns.id));
+  return rows.map(distributionRow);
+}
+
+/** One page of saved distribution runs, latest period first. */
+export async function pageDistributions(database: DbOrTx, tenantId: string, page: PageRequest) {
+  const where = eq(distributionRuns.tenantId, tenantId);
+  return paginate(
+    page,
+    async () => {
+      const [row] = await database.select({ n: count() }).from(distributionRuns).where(where);
+      return row?.n ?? 0;
+    },
+    async (limit, offset) => {
+      const rows = await database
+        .select()
+        .from(distributionRuns)
+        .where(where)
+        .orderBy(
+          desc(distributionRuns.periodStart),
+          desc(distributionRuns.createdAt),
+          desc(distributionRuns.id),
+        )
+        .limit(limit)
+        .offset(offset);
+      return rows.map(distributionRow);
+    },
+  );
 }
 
 /** A partner's running account: capital, final profit shares, drawings. */

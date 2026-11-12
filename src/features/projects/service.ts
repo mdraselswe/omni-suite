@@ -1,28 +1,33 @@
 import "server-only";
-import { and, asc, desc, eq, gte, ilike, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNull, lte, ne, or, sql, type SQL } from "drizzle-orm";
 import { t } from "@/i18n";
 import type { CustomValues } from "@/lib/custom-fields";
 import { addDays } from "@/lib/dates";
+import { paginate, type PageRequest } from "@/lib/pagination";
 import { UserError } from "@/server/action";
 import { audit, markChanged } from "@/server/audit";
 import type { Database, DbOrTx } from "@/server/db";
 import {
   clients,
   comments,
+  invoices,
   memberRates,
   memberships,
   projectMembers,
   projects,
   projectTemplates,
+  proposals,
   tasks,
   timeEntries,
   user,
 } from "@/server/db/schema";
 import type { Scope } from "@/server/rbac/resolve";
+import { matchesSearch } from "@/server/search";
 import { clientUserIds, notify, usersWithPermission } from "@/server/shared";
 import type { TenantContext } from "@/server/tenancy/context";
 import { actorOf, insertInvoice } from "@/features/invoices";
-import { timeInvoiceLines } from "./time-invoice";
+import type { TemplateTask } from "./template-tasks";
+import { timeInvoiceLines, timeValue } from "./time-invoice";
 
 /* ─── Scope filters ────────────────────────────────────────────── */
 
@@ -66,36 +71,90 @@ async function assertClientInTenant(tx: DbOrTx, ctx: TenantContext, clientId: st
 
 /* ─── Projects ─────────────────────────────────────────────────── */
 
-export async function listProjects(
+export type ProjectFilter = {
+  status?: string;
+  clientId?: string;
+  /** Words to find in the project or client name. */
+  q?: string;
+};
+
+function projectWhere(ctx: TenantContext, scope: Scope, filter: ProjectFilter): SQL | undefined {
+  return and(
+    eq(projects.tenantId, ctx.tenant.id),
+    projectScopeFilter(ctx, scope),
+    filter.status ? eq(projects.status, filter.status) : undefined,
+    filter.clientId ? eq(projects.clientId, filter.clientId) : undefined,
+    matchesSearch(filter.q, [projects.name, clients.name]),
+  );
+}
+
+/**
+ * Newest first, with task progress. Client users' progress counts only the tasks
+ * they can see, so internal tasks never move (or stall) the bar in the portal.
+ */
+async function projectRows(
   database: DbOrTx,
-  ctx: TenantContext,
-  scope: Scope,
-  filter: { status?: string; clientId?: string; q?: string; limit?: number } = {},
+  where: SQL | undefined,
+  limit: number,
+  offset = 0,
+  clientOnly = false,
 ) {
-  const q = filter.q?.replace(/[%_\\]/g, "").trim();
-  const taskCounts = sql<string>`(select count(*) from ${tasks} where ${tasks.projectId} = ${projects.id})`;
-  const doneCounts = sql<string>`(select count(*) from ${tasks} where ${tasks.projectId} = ${projects.id} and ${tasks.status} = 'done')`;
+  const visible = clientOnly ? sql` and ${tasks.clientVisible} = true` : sql``;
+  const taskCounts = sql<string>`(select count(*) from ${tasks} where ${tasks.projectId} = ${projects.id}${visible})`;
+  const doneCounts = sql<string>`(select count(*) from ${tasks} where ${tasks.projectId} = ${projects.id} and ${tasks.status} = 'done'${visible})`;
   const rows = await database
     .select({ project: projects, clientName: clients.name, taskCount: taskCounts, doneCount: doneCounts })
     .from(projects)
     .leftJoin(clients, eq(clients.id, projects.clientId))
-    .where(
-      and(
-        eq(projects.tenantId, ctx.tenant.id),
-        projectScopeFilter(ctx, scope),
-        filter.status ? eq(projects.status, filter.status) : undefined,
-        filter.clientId ? eq(projects.clientId, filter.clientId) : undefined,
-        q ? or(ilike(projects.name, `%${q}%`), ilike(clients.name, `%${q}%`)) : undefined,
-      ),
-    )
-    .orderBy(desc(projects.createdAt))
-    .limit(filter.limit ?? 500);
+    .where(where)
+    .orderBy(desc(projects.createdAt), desc(projects.id))
+    .limit(limit)
+    .offset(offset);
   return rows.map((r) => ({
     ...r.project,
     clientName: r.clientName,
     taskCount: Number(r.taskCount),
     doneCount: Number(r.doneCount),
   }));
+}
+
+/** Up to `limit` projects (dashboards, pickers). Lists use pageProjects. */
+export async function listProjects(
+  database: DbOrTx,
+  ctx: TenantContext,
+  scope: Scope,
+  filter: ProjectFilter & { limit?: number } = {},
+) {
+  return projectRows(
+    database,
+    projectWhere(ctx, scope, filter),
+    filter.limit ?? 500,
+    0,
+    ctx.membership.kind === "client",
+  );
+}
+
+/** One page of projects and the number that match. */
+export async function pageProjects(
+  database: DbOrTx,
+  ctx: TenantContext,
+  scope: Scope,
+  filter: ProjectFilter,
+  page: PageRequest,
+) {
+  const where = projectWhere(ctx, scope, filter);
+  return paginate(
+    page,
+    async () => {
+      const [row] = await database
+        .select({ n: count() })
+        .from(projects)
+        .leftJoin(clients, eq(clients.id, projects.clientId))
+        .where(where);
+      return row?.n ?? 0;
+    },
+    (limit, offset) => projectRows(database, where, limit, offset, ctx.membership.kind === "client"),
+  );
 }
 
 export async function getProject(database: DbOrTx, ctx: TenantContext, scope: Scope, id: string) {
@@ -128,10 +187,19 @@ export async function createProject(
   ctx: TenantContext,
   input: ProjectInput & { templateId: string | null },
 ): Promise<string> {
+  return database.transaction((tx) => createProjectTx(tx, ctx, input));
+}
+
+/** Creates a project inside an existing transaction (also used when a proposal is accepted). */
+export async function createProjectTx(
+  tx: DbOrTx,
+  ctx: TenantContext,
+  input: ProjectInput & { templateId: string | null; proposalId?: string | null },
+): Promise<string> {
   assertStatus(ctx, input.status);
-  return database.transaction(async (tx) => {
-    if (input.clientId) await assertClientInTenant(tx, ctx, input.clientId);
-    const { templateId, ...values } = input;
+  if (input.clientId) await assertClientInTenant(tx, ctx, input.clientId);
+  const { templateId, ...values } = input;
+  {
     const [row] = await tx
       .insert(projects)
       .values({ tenantId: ctx.tenant.id, createdBy: ctx.user.id, ...values })
@@ -152,7 +220,9 @@ export async function createProject(
             tenantId: ctx.tenant.id,
             projectId: row.id,
             title: task.title,
-            clientVisible: task.clientVisible,
+            // Approval happens in the portal, so an approval task is always client-visible.
+            clientVisible: task.clientVisible || !!task.needsApproval,
+            needsApproval: !!task.needsApproval,
             position: i,
           })),
         );
@@ -168,7 +238,7 @@ export async function createProject(
     });
     await markChanged(tx, ctx.tenant.id, "project", row.id);
     return row.id;
-  });
+  }
 }
 
 export async function updateProject(
@@ -259,7 +329,7 @@ export async function listProjectTemplates(database: DbOrTx, tenantId: string) {
 export async function saveProjectTemplate(
   database: Database,
   ctx: TenantContext,
-  input: { id: string | null; name: string; tasks: { title: string; clientVisible: boolean }[] },
+  input: { id: string | null; name: string; tasks: TemplateTask[] },
 ): Promise<string> {
   return database.transaction(async (tx) => {
     let id: string | undefined;
@@ -468,12 +538,17 @@ export async function updateTask(
         .from(projects)
         .where(eq(projects.id, task.projectId));
       if (p?.clientId) {
-        await notify(tx, ctx.tenant.id, await clientUserIds(tx, ctx.tenant.id, p.clientId), {
-          title: t("tasks.approvalTitle", { name: ctx.tenant.name }),
-          body: task.title,
-          link: `/${ctx.tenant.slug}/portal/projects/${task.projectId}`,
-          email: true,
-        });
+        await notify(
+          tx,
+          ctx.tenant.id,
+          await clientUserIds(tx, ctx.tenant.id, p.clientId, "portal.approve"),
+          {
+            title: t("tasks.approvalTitle", { name: ctx.tenant.name }),
+            body: task.title,
+            link: `/${ctx.tenant.slug}/portal/projects/${task.projectId}`,
+            email: true,
+          },
+        );
       }
     }
     await audit(tx, {
@@ -488,30 +563,68 @@ export async function updateTask(
   });
 }
 
-/** Client approves a task from the portal. */
+/** The task's active assignee; with none, the project's audience. */
+async function taskAudience(tx: DbOrTx, tenantId: string, projectId: string, assignee: string | null) {
+  if (assignee) {
+    const [m] = await tx
+      .select({ userId: memberships.userId })
+      .from(memberships)
+      .where(and(eq(memberships.id, assignee), eq(memberships.status, "active")));
+    if (m) return [m.userId];
+  }
+  return projectAudience(tx, tenantId, projectId);
+}
+
+/** Active members on the project's team; with no team, everyone who can change projects. */
+async function projectAudience(tx: DbOrTx, tenantId: string, projectId: string) {
+  const team = await tx
+    .select({ userId: memberships.userId })
+    .from(projectMembers)
+    .innerJoin(memberships, eq(memberships.id, projectMembers.membershipId))
+    .where(
+      and(
+        eq(projectMembers.projectId, projectId),
+        eq(memberships.status, "active"),
+        eq(memberships.kind, "internal"),
+      ),
+    );
+  if (team.length > 0) return team.map((m) => m.userId);
+  return usersWithPermission(tx, tenantId, "projects.write");
+}
+
+/** Client approves a task from the portal. Only a task the team moved to review can be approved. */
 export async function approveTask(database: Database, ctx: TenantContext, id: string) {
   await database.transaction(async (tx) => {
     const [row] = await tx
       .select({ task: tasks, clientId: projects.clientId })
       .from(tasks)
       .innerJoin(projects, eq(projects.id, tasks.projectId))
-      .where(and(eq(tasks.id, id), eq(tasks.tenantId, ctx.tenant.id)));
+      .where(and(eq(tasks.id, id), eq(tasks.tenantId, ctx.tenant.id)))
+      .for("update", { of: tasks });
     if (
       !row ||
+      ctx.membership.kind !== "client" ||
       !row.task.needsApproval ||
       !row.task.clientVisible ||
       row.clientId !== ctx.membership.clientId
     ) {
       throw new UserError(t("tasks.missing"));
     }
+    if (row.task.status !== "review" || row.task.approvedAt) throw new UserError(t("tasks.notInReview"));
     await tx
       .update(tasks)
-      .set({ approvedAt: new Date(), approvedBy: ctx.user.id, status: "done" })
+      .set({ approvedAt: new Date(), approvedBy: ctx.user.id, status: "done", updatedAt: new Date() })
       .where(eq(tasks.id, id));
-    await notify(tx, ctx.tenant.id, await usersWithPermission(tx, ctx.tenant.id, "projects.write"), {
-      title: t("tasks.approvedTitle", { title: row.task.title }),
-      link: `/${ctx.tenant.slug}/projects/${row.task.projectId}`,
-    });
+    await notify(
+      tx,
+      ctx.tenant.id,
+      await taskAudience(tx, ctx.tenant.id, row.task.projectId, row.task.assigneeMembershipId),
+      {
+        title: t("tasks.approvedTitle", { title: row.task.title }),
+        link: `/${ctx.tenant.slug}/projects/${row.task.projectId}`,
+        email: true,
+      },
+    );
     await audit(tx, {
       tenantId: ctx.tenant.id,
       actorUserId: ctx.user.id,
@@ -562,15 +675,12 @@ export async function requestTaskChanges(
       body: t("tasks.changesComment", { title: row.task.title, comment: note }),
       clientVisible: true,
     });
-    let recipients: string[] = [];
-    if (row.task.assigneeMembershipId) {
-      const [assignee] = await tx
-        .select({ userId: memberships.userId })
-        .from(memberships)
-        .where(and(eq(memberships.id, row.task.assigneeMembershipId), eq(memberships.status, "active")));
-      if (assignee) recipients = [assignee.userId];
-    }
-    if (recipients.length === 0) recipients = await usersWithPermission(tx, ctx.tenant.id, "projects.write");
+    const recipients = await taskAudience(
+      tx,
+      ctx.tenant.id,
+      row.task.projectId,
+      row.task.assigneeMembershipId,
+    );
     await notify(tx, ctx.tenant.id, recipients, {
       title: t("tasks.changesTitle", { title: row.task.title }),
       body: note.slice(0, 200),
@@ -657,26 +767,79 @@ export async function addComment(
       body: input.body,
       clientVisible: visible,
     });
+    const title = t("portalWork.commentTitle", { name: ctx.user.name, project: p.name });
     if (isClient) {
-      const team = await tx
-        .select({ userId: memberships.userId })
-        .from(projectMembers)
-        .innerJoin(memberships, eq(memberships.id, projectMembers.membershipId))
-        .where(eq(projectMembers.projectId, p.id));
-      await notify(
-        tx,
-        ctx.tenant.id,
-        team.map((m) => m.userId),
-        { title: p.name, body: input.body.slice(0, 200), link: `/${ctx.tenant.slug}/projects/${p.id}` },
-      );
+      // The project's team hears about it; a project with no team goes to whoever runs projects.
+      await notify(tx, ctx.tenant.id, await projectAudience(tx, ctx.tenant.id, p.id), {
+        title,
+        body: input.body.slice(0, 500),
+        link: `/${ctx.tenant.slug}/projects/${p.id}`,
+        email: true,
+      });
     } else if (visible && p.clientId) {
-      await notify(tx, ctx.tenant.id, await clientUserIds(tx, ctx.tenant.id, p.clientId), {
-        title: p.name,
-        body: input.body.slice(0, 200),
+      await notify(tx, ctx.tenant.id, await clientUserIds(tx, ctx.tenant.id, p.clientId, "portal.projects"), {
+        title,
+        body: input.body.slice(0, 500),
         link: `/${ctx.tenant.slug}/portal/projects/${p.id}`,
+        email: true,
       });
     }
+    await audit(tx, {
+      tenantId: ctx.tenant.id,
+      actorUserId: ctx.user.id,
+      action: "comment.create",
+      entityType: "project",
+      entityId: p.id,
+      data: { clientVisible: visible },
+    });
   });
+}
+
+/**
+ * What a client sees billed for a project: the proposal it started from and the
+ * invoices made from that proposal or from the project's time (never drafts).
+ */
+export async function projectBilling(
+  database: DbOrTx,
+  tenantId: string,
+  project: { id: string; proposalId: string | null; clientId: string | null },
+) {
+  const [proposal] = project.proposalId
+    ? await database
+        .select({
+          id: proposals.id,
+          number: proposals.number,
+          title: proposals.title,
+          status: proposals.status,
+          validUntil: proposals.validUntil,
+          totalMinor: proposals.totalMinor,
+          currency: proposals.currency,
+        })
+        .from(proposals)
+        .where(
+          and(
+            eq(proposals.id, project.proposalId),
+            eq(proposals.tenantId, tenantId),
+            ne(proposals.status, "draft"),
+          ),
+        )
+    : [];
+  const fromTime = sql`${invoices.id} in (select ${timeEntries.invoiceId} from ${timeEntries} where ${timeEntries.projectId} = ${project.id} and ${timeEntries.invoiceId} is not null)`;
+  const linked = project.clientId
+    ? await database
+        .select()
+        .from(invoices)
+        .where(
+          and(
+            eq(invoices.tenantId, tenantId),
+            eq(invoices.clientId, project.clientId),
+            ne(invoices.status, "draft"),
+            project.proposalId ? or(eq(invoices.proposalId, project.proposalId), fromTime) : fromTime,
+          ),
+        )
+        .orderBy(asc(invoices.issueDate), asc(invoices.createdAt))
+    : [];
+  return { proposal: proposal ?? null, invoices: linked };
 }
 
 /* ─── Time ─────────────────────────────────────────────────────── */
@@ -687,30 +850,83 @@ export function timeScopeFilter(ctx: TenantContext, scope: Scope): SQL | undefin
   return scope === "assigned" ? or(own, sql`${timeEntries.projectId} in ${myProjectIds(ctx)}`) : own;
 }
 
-export async function listTime(
-  database: DbOrTx,
-  ctx: TenantContext,
-  scope: Scope,
-  filter: { from: string; to: string; projectId?: string; membershipId?: string },
-) {
+export type TimeFilter = {
+  from: string;
+  to: string;
+  projectId?: string;
+  membershipId?: string;
+  /** Words to find in the note, project or member name. */
+  q?: string;
+};
+
+function timeWhere(ctx: TenantContext, scope: Scope, filter: TimeFilter): SQL | undefined {
+  return and(
+    eq(timeEntries.tenantId, ctx.tenant.id),
+    timeScopeFilter(ctx, scope),
+    gte(timeEntries.date, filter.from),
+    lte(timeEntries.date, filter.to),
+    filter.projectId ? eq(timeEntries.projectId, filter.projectId) : undefined,
+    filter.membershipId ? eq(timeEntries.membershipId, filter.membershipId) : undefined,
+    matchesSearch(filter.q, [timeEntries.note, projects.name, user.name]),
+  );
+}
+
+async function timeRows(database: DbOrTx, where: SQL | undefined, limit: number, offset = 0) {
   return database
     .select({ entry: timeEntries, projectName: projects.name, memberName: user.name })
     .from(timeEntries)
     .innerJoin(projects, eq(projects.id, timeEntries.projectId))
     .innerJoin(memberships, eq(memberships.id, timeEntries.membershipId))
     .innerJoin(user, eq(user.id, memberships.userId))
-    .where(
-      and(
-        eq(timeEntries.tenantId, ctx.tenant.id),
-        timeScopeFilter(ctx, scope),
-        gte(timeEntries.date, filter.from),
-        lte(timeEntries.date, filter.to),
-        filter.projectId ? eq(timeEntries.projectId, filter.projectId) : undefined,
-        filter.membershipId ? eq(timeEntries.membershipId, filter.membershipId) : undefined,
-      ),
-    )
-    .orderBy(desc(timeEntries.date), desc(timeEntries.createdAt))
-    .limit(1000);
+    .where(where)
+    .orderBy(desc(timeEntries.date), desc(timeEntries.createdAt), desc(timeEntries.id))
+    .limit(limit)
+    .offset(offset);
+}
+
+/** Up to 1000 entries, newest first. The time page uses pageTime and timeTotals. */
+export async function listTime(database: DbOrTx, ctx: TenantContext, scope: Scope, filter: TimeFilter) {
+  return timeRows(database, timeWhere(ctx, scope, filter), 1000);
+}
+
+/** One page of time entries, plus count and minutes for everything the filter matches. */
+export async function pageTime(
+  database: DbOrTx,
+  ctx: TenantContext,
+  scope: Scope,
+  filter: TimeFilter,
+  page: PageRequest,
+) {
+  const where = timeWhere(ctx, scope, filter);
+  const totals = timeTotals(database, ctx, scope, filter);
+  const paged = await paginate(
+    page,
+    async () => (await totals).count,
+    (limit, offset) => timeRows(database, where, limit, offset),
+  );
+  return { ...paged, totals: await totals };
+}
+
+/** Entry count and minutes (all, billable, billable not yet invoiced) for the whole filter. */
+export async function timeTotals(database: DbOrTx, ctx: TenantContext, scope: Scope, filter: TimeFilter) {
+  const [row] = await database
+    .select({
+      count: count(),
+      minutes: sql<string>`coalesce(sum(${timeEntries.minutes}), 0)`,
+      billable: sql<string>`coalesce(sum(case when ${timeEntries.billable} then ${timeEntries.minutes} else 0 end), 0)`,
+      unbilled: sql<string>`coalesce(sum(case when ${timeEntries.billable} and ${timeEntries.invoiceId} is null then ${timeEntries.minutes} else 0 end), 0)`,
+    })
+    .from(timeEntries)
+    .innerJoin(projects, eq(projects.id, timeEntries.projectId))
+    .innerJoin(memberships, eq(memberships.id, timeEntries.membershipId))
+    .innerJoin(user, eq(user.id, memberships.userId))
+    .where(timeWhere(ctx, scope, filter));
+  return {
+    count: row?.count ?? 0,
+    minutes: Number(row?.minutes ?? 0),
+    billable: Number(row?.billable ?? 0),
+    unbilled: Number(row?.unbilled ?? 0),
+  };
 }
 
 export async function logTime(
@@ -871,20 +1087,20 @@ const unbilled = (tenantId: string, projectId: string) =>
     isNull(timeEntries.invoiceId),
   );
 
-/** Billable time on a project that is not on an invoice yet. */
+/** Billable time on a project that is not on an invoice yet, valued exactly as it will be invoiced. */
 export async function unbilledTime(database: DbOrTx, tenantId: string, projectId: string) {
-  const [row] = await database
+  const entries = await database
     .select({
-      count: sql<number>`count(*)::int`,
-      minutes: sql<string>`coalesce(sum(${timeEntries.minutes}), 0)`,
-      value: sql<string>`coalesce(sum(${timeEntries.minutes} * ${timeEntries.hourlyRateMinor} / 60), 0)`,
+      membershipId: timeEntries.membershipId,
+      minutes: timeEntries.minutes,
+      hourlyRateMinor: timeEntries.hourlyRateMinor,
     })
     .from(timeEntries)
     .where(unbilled(tenantId, projectId));
   return {
-    count: Number(row?.count ?? 0),
-    minutes: Number(row?.minutes ?? 0),
-    valueMinor: BigInt(String(row?.value ?? "0").split(".")[0] ?? "0"),
+    count: entries.length,
+    minutes: entries.reduce((sum, e) => sum + e.minutes, 0),
+    valueMinor: timeValue(entries),
   };
 }
 

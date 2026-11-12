@@ -1,51 +1,133 @@
 import "server-only";
-import { and, desc, eq, ilike, inArray, isNotNull, isNull, or, sql, type SQL } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  lte,
+  notInArray,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 import { t } from "@/i18n";
 import type { CustomValues } from "@/lib/custom-fields";
+import { paginate, type PageRequest } from "@/lib/pagination";
 import { UserError } from "@/server/action";
 import { audit, markChanged } from "@/server/audit";
 import type { Database, DbOrTx } from "@/server/db";
 import { leads, memberships, user } from "@/server/db/schema";
 import type { Scope } from "@/server/rbac/resolve";
+import { matchesSearch } from "@/server/search";
 import { customFieldsFor } from "@/server/shared";
 import type { TenantContext } from "@/server/tenancy/context";
 import { insertClient } from "@/features/clients";
 import { carryCustomValues } from "./carry-custom";
 
 export type LeadFilter = {
-  /** Search in name, company and email. */
+  /** Words to find in the name, company, email or phone. */
   q?: string;
   /** false (default): active leads only; true: active and archived. */
   archived?: boolean;
-  limit?: number;
+  /** Only these stages. */
+  stages?: readonly string[];
+  /** None of these stages (e.g. leads whose stage was removed from the pipeline). */
+  notStages?: readonly string[];
+  /** Open leads with a follow-up on or before this day (most overdue first). */
+  dueBy?: string;
 };
+
+/** Stage keys of the open (not won or lost) part of the pipeline. */
+const openStages = (ctx: TenantContext) =>
+  ctx.tenant.settings.pipelineStages.filter((s) => s.kind === "open").map((s) => s.key);
+
+/** Open, active leads whose follow-up day has come. */
+function dueWhere(ctx: TenantContext, day: string): SQL | undefined {
+  const open = openStages(ctx);
+  return and(
+    isNull(leads.archivedAt),
+    lte(leads.followUpDate, day),
+    open.length > 0 ? inArray(leads.stage, open) : sql`false`,
+  );
+}
 
 function leadScope(ctx: TenantContext, scope: Scope): SQL | undefined {
   return scope === "all" ? undefined : eq(leads.ownerMembershipId, ctx.membership.id);
 }
 
 function leadWhere(ctx: TenantContext, scope: Scope, filter: LeadFilter): SQL | undefined {
-  const q = filter.q?.replace(/[%_\\]/g, "").trim();
   return and(
     eq(leads.tenantId, ctx.tenant.id),
     leadScope(ctx, scope),
     filter.archived ? undefined : isNull(leads.archivedAt),
-    q
-      ? or(ilike(leads.name, `%${q}%`), ilike(leads.company, `%${q}%`), ilike(leads.email, `%${q}%`))
-      : undefined,
+    filter.stages ? inArray(leads.stage, [...filter.stages]) : undefined,
+    filter.notStages?.length ? notInArray(leads.stage, [...filter.notStages]) : undefined,
+    matchesSearch(filter.q, [leads.name, leads.company, leads.email, leads.phone]),
+    filter.dueBy ? dueWhere(ctx, filter.dueBy) : undefined,
   );
 }
 
-/** Newest first, so a limit keeps the most recent leads. */
-export async function listLeads(database: DbOrTx, ctx: TenantContext, scope: Scope, filter: LeadFilter = {}) {
+async function leadRows(
+  database: DbOrTx,
+  where: SQL | undefined,
+  limit: number,
+  offset = 0,
+  byFollowUp = false,
+) {
   return database
     .select({ lead: leads, ownerName: user.name })
     .from(leads)
     .leftJoin(memberships, eq(memberships.id, leads.ownerMembershipId))
     .leftJoin(user, eq(user.id, memberships.userId))
-    .where(leadWhere(ctx, scope, filter))
-    .orderBy(desc(leads.createdAt))
-    .limit(filter.limit ?? 1000);
+    .where(where)
+    .orderBy(...(byFollowUp ? [asc(leads.followUpDate)] : []), desc(leads.createdAt), desc(leads.id))
+    .limit(limit)
+    .offset(offset);
+}
+
+export type LeadRow = Awaited<ReturnType<typeof leadRows>>[number];
+
+/** One page of leads, newest first, and the number that match (the list view). */
+export async function pageLeads(
+  database: DbOrTx,
+  ctx: TenantContext,
+  scope: Scope,
+  filter: LeadFilter,
+  page: PageRequest,
+) {
+  const where = leadWhere(ctx, scope, filter);
+  return paginate(
+    page,
+    async () => {
+      const [row] = await database.select({ n: count() }).from(leads).where(where);
+      return row?.n ?? 0;
+    },
+    (limit, offset) => leadRows(database, where, limit, offset, Boolean(filter.dueBy)),
+  );
+}
+
+/**
+ * The board: the newest `perStage` leads of every stage (newest first). Columns show
+ * how many there are in total (leadStageTotals) and link to the list view for the rest.
+ */
+export async function boardLeads(
+  database: DbOrTx,
+  ctx: TenantContext,
+  scope: Scope,
+  filter: LeadFilter,
+  perStage: number,
+) {
+  const newest = sql`${leads.id} in (
+    select ranked.id from (
+      select ${leads.id} as id,
+        row_number() over (partition by ${leads.stage} order by ${leads.createdAt} desc, ${leads.id} desc) as n
+      from ${leads} where ${leadWhere(ctx, scope, filter)}
+    ) ranked where ranked.n <= ${perStage})`;
+  // Every stage is capped, so the whole board is bounded; the limit is only a safety net.
+  return leadRows(database, newest, perStage * 50);
 }
 
 /** Count and value per stage (whole pipeline, not just the loaded page), active leads only. */
@@ -62,7 +144,7 @@ export async function leadStageTotals(
       value: sql<string>`coalesce(sum(${leads.valueMinor}), 0)`,
     })
     .from(leads)
-    .where(leadWhere(ctx, scope, { ...filter, limit: undefined }))
+    .where(leadWhere(ctx, scope, filter))
     .groupBy(leads.stage);
   return new Map(rows.map((r) => [r.stage, { count: Number(r.count), valueMinor: BigInt(r.value) }]));
 }
@@ -85,6 +167,7 @@ export type LeadInput = {
   stage: string;
   valueMinor: bigint;
   notes: string;
+  followUpDate?: string | null;
   ownerMembershipId: string | null;
   custom: CustomValues;
 };
@@ -259,16 +342,34 @@ export async function setLeadArchived(
   });
 }
 
-/** Open pipeline value and count (stages that are not won or lost). */
-export async function pipelineSummary(database: DbOrTx, ctx: TenantContext) {
-  const open = ctx.tenant.settings.pipelineStages.filter((s) => s.kind === "open").map((s) => s.key);
-  if (open.length === 0) return { count: 0, valueMinor: 0n };
+/**
+ * Open pipeline value and count (stages that are not won or lost), counting only
+ * the leads this member may see ("own" scope: the leads they own).
+ */
+export async function pipelineSummary(database: DbOrTx, ctx: TenantContext, today?: string) {
+  const open = openStages(ctx);
+  const scope = ctx.permissions.get("leads.read");
+  if (open.length === 0 || !scope) return { count: 0, valueMinor: 0n, dueCount: 0 };
   const [row] = await database
     .select({
       count: sql<number>`count(*)::int`,
       value: sql<string>`coalesce(sum(${leads.valueMinor}), 0)`,
+      due: today
+        ? sql<number>`count(*) filter (where ${leads.followUpDate} <= ${today})::int`
+        : sql<number>`0`,
     })
     .from(leads)
-    .where(and(eq(leads.tenantId, ctx.tenant.id), inArray(leads.stage, open), isNull(leads.archivedAt)));
-  return { count: Number(row?.count ?? 0), valueMinor: BigInt(row?.value ?? "0") };
+    .where(
+      and(
+        eq(leads.tenantId, ctx.tenant.id),
+        inArray(leads.stage, open),
+        isNull(leads.archivedAt),
+        leadScope(ctx, scope),
+      ),
+    );
+  return {
+    count: Number(row?.count ?? 0),
+    valueMinor: BigInt(row?.value ?? "0"),
+    dueCount: Number(row?.due ?? 0),
+  };
 }

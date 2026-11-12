@@ -1,12 +1,16 @@
 import "server-only";
-import { and, desc, eq, or, sql, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, ne, or, sql, type SQL } from "drizzle-orm";
+import { z } from "zod";
+import { limits } from "@/config";
 import { serverEnv } from "@/config/env";
 import { t } from "@/i18n";
-import { UserError } from "@/server/action";
+import { paginate, type PageRequest } from "@/lib/pagination";
+import { fields, formObject, UserError } from "@/server/action";
 import { audit, markChanged } from "@/server/audit";
 import type { Database, DbOrTx } from "@/server/db";
 import { clients, files, projectMembers, projects, transactions, user } from "@/server/db/schema";
 import type { Scope } from "@/server/rbac/resolve";
+import { matchesSearch } from "@/server/search";
 import { notify, usersWithPermission } from "@/server/shared";
 import { removeFile, storeFile } from "@/server/storage";
 import type { TenantContext } from "@/server/tenancy/context";
@@ -30,38 +34,78 @@ function fileScope(ctx: TenantContext, scope: Scope): SQL | undefined {
       ),
     );
   }
-  if (scope === "all") return undefined;
+  // Receipts on ledger rows are finance records: only for people who may read the ledger.
+  const receipts = ctx.permissions.has("finance.read") ? undefined : ne(files.entityType, "transaction");
+  if (scope === "all") return receipts;
   const mine = eq(files.uploadedBy, ctx.user.id);
-  if (scope === "own") return mine;
-  return or(
-    mine,
-    and(
-      eq(files.entityType, "project"),
-      sql`${files.entityId} in (select ${projectMembers.projectId} from ${projectMembers} where ${projectMembers.membershipId} = ${ctx.membership.id})`,
+  if (scope === "own") return and(receipts, mine);
+  return and(
+    receipts,
+    or(
+      mine,
+      and(
+        eq(files.entityType, "project"),
+        sql`${files.entityId} in (select ${projectMembers.projectId} from ${projectMembers} where ${projectMembers.membershipId} = ${ctx.membership.id})`,
+      ),
     ),
   );
 }
 
-export async function listFiles(
-  database: DbOrTx,
-  ctx: TenantContext,
-  scope: Scope,
-  filter: { entityType?: FileEntity; entityId?: string; limit?: number } = {},
-) {
+export type FileFilter = {
+  entityType?: FileEntity;
+  entityId?: string;
+  /** Words to find in the file name. */
+  q?: string;
+};
+
+function fileWhere(ctx: TenantContext, scope: Scope, filter: FileFilter): SQL | undefined {
+  return and(
+    eq(files.tenantId, ctx.tenant.id),
+    fileScope(ctx, scope),
+    filter.entityType ? eq(files.entityType, filter.entityType) : undefined,
+    filter.entityId ? eq(files.entityId, filter.entityId) : undefined,
+    matchesSearch(filter.q, [files.name]),
+  );
+}
+
+async function fileRows(database: DbOrTx, where: SQL | undefined, limit: number, offset = 0) {
   return database
     .select({ file: files, uploaderName: user.name })
     .from(files)
     .leftJoin(user, eq(user.id, files.uploadedBy))
-    .where(
-      and(
-        eq(files.tenantId, ctx.tenant.id),
-        fileScope(ctx, scope),
-        filter.entityType ? eq(files.entityType, filter.entityType) : undefined,
-        filter.entityId ? eq(files.entityId, filter.entityId) : undefined,
-      ),
-    )
-    .orderBy(desc(files.createdAt))
-    .limit(filter.limit ?? 500);
+    .where(where)
+    .orderBy(desc(files.createdAt), desc(files.id))
+    .limit(limit)
+    .offset(offset);
+}
+
+/** Up to `limit` files, newest first (detail pages). Lists use pageFiles. */
+export async function listFiles(
+  database: DbOrTx,
+  ctx: TenantContext,
+  scope: Scope,
+  filter: FileFilter & { limit?: number } = {},
+) {
+  return fileRows(database, fileWhere(ctx, scope, filter), filter.limit ?? 500);
+}
+
+/** One page of files and the number that match. */
+export async function pageFiles(
+  database: DbOrTx,
+  ctx: TenantContext,
+  scope: Scope,
+  filter: FileFilter,
+  page: PageRequest,
+) {
+  const where = fileWhere(ctx, scope, filter);
+  return paginate(
+    page,
+    async () => {
+      const [row] = await database.select({ n: count() }).from(files).where(where);
+      return row?.n ?? 0;
+    },
+    (limit, offset) => fileRows(database, where, limit, offset),
+  );
 }
 
 export async function fileForDownload(database: DbOrTx, ctx: TenantContext, scope: Scope, id: string) {
@@ -128,6 +172,43 @@ async function assertTarget(
   return { name: t("files.entity.transaction"), link: `${base}/finance` };
 }
 
+/** Bytes of all files the business keeps. */
+export async function storageUsed(database: DbOrTx, tenantId: string): Promise<number> {
+  const [row] = await database
+    .select({ bytes: sql<string>`coalesce(sum(${files.size}), 0)::bigint` })
+    .from(files)
+    .where(eq(files.tenantId, tenantId));
+  return Number(row?.bytes ?? 0);
+}
+
+/** The business's storage quota in bytes (src/config/limits.ts). */
+export function storageQuota(): number {
+  return limits.storage.perBusinessMb * 1024 * 1024;
+}
+
+/** Throws when `size` more bytes would take the business over its storage quota. */
+async function assertStorageFor(database: DbOrTx, tenantId: string, size: number): Promise<void> {
+  const used = await storageUsed(database, tenantId);
+  const quota = storageQuota();
+  if (used + size > quota) {
+    throw new UserError(t("security.storageFull", { limit: formatBytes(quota), used: formatBytes(used) }));
+  }
+}
+
+const uploadFields = z.object({
+  entityType: z.enum(["project", "client", "transaction", "general"]).default("general"),
+  entityId: fields.optionalId(),
+  clientVisible: fields.checkbox(),
+});
+
+/** The upload form's fields and file (server action or the upload route). */
+export function parseUploadForm(formData: FormData) {
+  const input = uploadFields.parse(formObject(formData));
+  const file = formData.get("file");
+  if (!(file instanceof File)) throw new UserError(t("files.empty"));
+  return { ...input, file };
+}
+
 export async function uploadFile(
   database: Database,
   ctx: TenantContext,
@@ -138,9 +219,13 @@ export async function uploadFile(
   if (input.file.size > max * 1024 * 1024) throw new UserError(t("files.tooLarge", { mb: max }));
   const target = await assertTarget(database, ctx, input.entityType, input.entityId);
   const isClient = ctx.membership.kind === "client";
+  // Checked before writing to disk, and again under a per-business lock (parallel uploads).
+  await assertStorageFor(database, ctx.tenant.id, input.file.size);
   const key = await storeFile(ctx.tenant.id, new Uint8Array(await input.file.arrayBuffer()));
   try {
     return await database.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`files:${ctx.tenant.id}`}))`);
+      await assertStorageFor(tx, ctx.tenant.id, input.file.size);
       const [row] = await tx
         .insert(files)
         .values({

@@ -2,7 +2,15 @@
 
 import { z } from "zod";
 import { t } from "@/i18n";
-import { customValues, fields, formObject, runAction, UserError, type ActionState } from "@/server/action";
+import {
+  customValues,
+  FieldErrors,
+  fields,
+  formObject,
+  runAction,
+  UserError,
+  type ActionState,
+} from "@/server/action";
 import { actionContext } from "@/server/auth/session";
 import { db } from "@/server/db";
 import { parseCsv } from "@/server/export";
@@ -11,12 +19,13 @@ import { clientSchema, parseClientImport } from "./import";
 import {
   createClient,
   deleteTemplate,
+  parseQuestionLines,
   saveTemplate,
   sendOnboarding,
   submitOnboarding,
   updateClient,
   updateOnboardingChecklist,
-  type OnboardingField,
+  type OnboardingAnswers,
 } from "./service";
 
 export async function createClientAction(
@@ -87,8 +96,24 @@ export async function sendOnboardingAction(
 ): Promise<ActionState> {
   return runAction(async () => {
     const { ctx } = await actionContext(slug, "onboarding.manage");
-    const input = z.object({ clientId: fields.id(), templateId: fields.id() }).parse(formObject(formData));
-    await sendOnboarding(db(), ctx, input);
+    const input = z
+      .object({
+        clientId: fields.id(),
+        templateId: fields.id(),
+        // Only sent when nobody at the client can open the portal yet.
+        invite: fields.checkbox(),
+        inviteEmail: fields.email(),
+      })
+      .parse(formObject(formData));
+    if (input.invite && !input.inviteEmail) {
+      throw new FieldErrors({ inviteEmail: [t("form.required")] });
+    }
+    const { delivery } = await sendOnboarding(db(), ctx, {
+      clientId: input.clientId,
+      templateId: input.templateId,
+      inviteEmail: input.invite ? input.inviteEmail : null,
+    });
+    return t(`access.onboarding.sent.${delivery}`, { email: input.inviteEmail });
   });
 }
 
@@ -99,7 +124,6 @@ export async function saveTemplateAction(
 ): Promise<ActionState> {
   return runAction(async () => {
     const { ctx } = await actionContext(slug, "onboarding.manage");
-    const raw = formObject(formData);
     const input = z
       .object({
         id: fields.optionalId(),
@@ -107,29 +131,8 @@ export async function saveTemplateAction(
         questions: fields.text(10000),
         checklist: fields.text(5000),
       })
-      .parse(raw);
-    const used = new Set<string>();
-    const questions: OnboardingField[] = input.questions
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean)
-      .map((line, i) => {
-        const [label = "", type = "", required = ""] = line.split("|").map((p) => p.trim());
-        let key =
-          label
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, "_")
-            .replace(/^_|_$/g, "")
-            .slice(0, 40) || `q${i + 1}`;
-        if (used.has(key)) key = `${key}_${i + 1}`;
-        used.add(key);
-        return {
-          key,
-          label,
-          type: type === "textarea" ? "textarea" : "text",
-          required: required === "required",
-        };
-      });
+      .parse(formObject(formData));
+    const questions = parseQuestionLines(input.questions);
     const checklist = input.checklist
       .split("\n")
       .map((l) => l.trim())
@@ -159,13 +162,14 @@ export async function submitOnboardingAction(
 ): Promise<ActionState> {
   return runAction(async () => {
     const { ctx } = await actionContext(slug, "portal.onboarding");
-    const raw = formObject(formData);
-    const { id } = z.object({ id: fields.id() }).parse(raw);
-    const answers = Object.fromEntries(
-      Object.entries(raw)
-        .filter(([k]) => k.startsWith("a_"))
-        .map(([k, v]) => [k.slice(2), v]),
-    );
+    const { id } = z.object({ id: fields.id() }).parse(formObject(formData));
+    // Answers arrive as a_<key>; a file question sends one a_<key> per chosen file.
+    const answers: OnboardingAnswers = {};
+    for (const name of new Set(formData.keys())) {
+      if (!name.startsWith("a_")) continue;
+      const values = fields.all(formData, name);
+      answers[name.slice(2)] = values.length > 1 ? values : (values[0] ?? "");
+    }
     await submitOnboarding(db(), ctx, id, answers);
     return t("onboarding.thanks");
   });

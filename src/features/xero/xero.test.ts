@@ -204,7 +204,9 @@ describe("xero sync", () => {
     const tokenCall = calls.find((c) => c.url.includes("/connect/token"));
     expect(tokenCall?.body).toContain("refresh_token=rt-1");
     const conn = await getXeroConnection(database, tenantId);
-    expect(decrypt(conn?.refreshTokenEnc ?? "")).toBe("rt-2");
+    // The legacy (unbound) token still worked; the rotated one is bound to this business.
+    expect(decrypt(conn?.refreshTokenEnc ?? "", tenantId)).toBe("rt-2");
+    expect(() => decrypt(conn?.refreshTokenEnc ?? "", "another-business")).toThrow();
     expect(conn?.lastSyncedAt).toBeTruthy();
     expect(conn?.lastError).toBeNull();
     // Drafts stay out; the API got the tenant header.
