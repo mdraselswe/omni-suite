@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { hashPassword } from "better-auth/crypto";
 import { DEMO_ACCOUNTS, DEMO_PASSWORD } from "@/features/auth";
 import { createClient, listTemplates, sendOnboarding, submitOnboarding } from "@/features/clients";
@@ -11,7 +11,15 @@ import {
   listCategories,
   reverseTransaction,
 } from "@/features/finance";
-import { createInvoice, createRecurring, recordPayment, sendInvoice, voidInvoice } from "@/features/invoices";
+import { createBill, payBill } from "@/features/bills";
+import {
+  createInvoice,
+  createRecurring,
+  issueCreditNote,
+  recordPayment,
+  sendInvoice,
+  voidInvoice,
+} from "@/features/invoices";
 import {
   createPartner,
   decideRule,
@@ -33,11 +41,24 @@ import {
   updateTask,
 } from "@/features/projects";
 import { createProposal, invoiceFromProposal, respondToProposal, sendProposal } from "@/features/proposals";
+import { shareLinkFor } from "@/features/sharing";
 import { addDays, addMonths, monthEnd, monthStart, today as todayIn } from "@/lib/dates";
 import { uuidv7 } from "@/lib/ids";
 import type { LineItem } from "@/lib/line-items";
 import type { Database, DbOrTx } from "@/server/db";
-import { account, memberRoles, memberships, proposals, roles, tenants, user } from "@/server/db/schema";
+import {
+  account,
+  accounts,
+  bills,
+  clients,
+  invoices,
+  memberRoles,
+  memberships,
+  proposals,
+  roles,
+  tenants,
+  user,
+} from "@/server/db/schema";
 import { bumpPermissionsVersion } from "@/server/rbac/service";
 import type { TenantContext } from "@/server/tenancy/context";
 import { buildTenantContext, createTenant } from "@/server/tenancy/service";
@@ -118,7 +139,105 @@ async function tenantExists(database: Database, slug: string): Promise<boolean> 
   return Boolean(row);
 }
 
-export type SeedResult = { demo: "created" | "exists"; home: "created" | "exists" | "skipped" };
+/**
+ * Samples added in a later version: a credit note, a share link and supplier
+ * bills. Also added (once) to a demo business that an older seed made, so
+ * `pnpm db:seed` shows the new features without wiping anything.
+ */
+async function addLaterSamples(database: Database, today: string): Promise<boolean> {
+  const [demo] = await database.select({ id: tenants.id }).from(tenants).where(eq(tenants.slug, DEMO_SLUG));
+  if (!demo) return false;
+  const [hasBill] = await database
+    .select({ id: bills.id })
+    .from(bills)
+    .where(eq(bills.tenantId, demo.id))
+    .limit(1);
+  if (hasBill) return false;
+  const [ownerUser] = await database
+    .select({ id: user.id })
+    .from(user)
+    .where(eq(user.email, "owner@demo.test"));
+  if (!ownerUser) return false;
+  const owner = await contextFor(database, DEMO_SLUG, ownerUser.id);
+  const [bank] = await database
+    .select({ id: accounts.id })
+    .from(accounts)
+    .where(and(eq(accounts.tenantId, demo.id), eq(accounts.name, "Business bank")));
+  if (!bank) return false;
+  const cats = await listCategories(database, demo.id);
+  const cat = (name: string) => cats.find((c) => c.name === name)?.id ?? null;
+  const invoiceOf = async (client: string, status: "partially_paid" | "sent") => {
+    const [row] = await database
+      .select({ id: invoices.id })
+      .from(invoices)
+      .innerJoin(clients, eq(clients.id, invoices.clientId))
+      .where(and(eq(invoices.tenantId, demo.id), eq(clients.name, client), eq(invoices.status, status)))
+      .orderBy(asc(invoices.dueDate))
+      .limit(1);
+    return row?.id ?? null;
+  };
+
+  // One suburb page was dropped from the SEO work: a credit note takes $300 off what is owed.
+  const plumbingInvoice = await invoiceOf("Coastal Plumbing", "partially_paid");
+  if (plumbingInvoice) {
+    await issueCreditNote(database, owner, plumbingInvoice, {
+      amountMinor: 30_000n,
+      date: addDays(today, -2),
+      reason: "Local SEO: one suburb page dropped from the scope, as agreed by phone.",
+    });
+  }
+  // The share link of the cafe's late invoice, as staff would copy it into a message.
+  const cafeLate = await invoiceOf("Harbour Cafe", "sent");
+  if (cafeLate) await shareLinkFor(database, owner, "invoice", cafeLate);
+
+  /* Supplier bills (what the business owes): hosting paid, the designer half paid, the accountant overdue. */
+  const hosting = await createBill(database, owner, {
+    supplier: "CloudHost Pty Ltd",
+    reference: "CH-20931",
+    issueDate: addDays(today, -25),
+    dueDate: addDays(today, -11),
+    currency: "AUD",
+    totalMinor: 39_600n,
+    taxMinor: 3_600n,
+    categoryId: cat("Software & tools"),
+    notes: "Hosting for client websites, yearly plan",
+  });
+  await payBill(database, owner, hosting, {
+    amountMinor: 39_600n,
+    date: addDays(today, -12),
+    accountId: bank.id,
+  });
+  const contractor = await createBill(database, owner, {
+    supplier: "Pixel & Co Design",
+    reference: "INV-0457",
+    issueDate: addDays(today, -10),
+    dueDate: addDays(today, 20),
+    currency: "AUD",
+    totalMinor: 220_000n,
+    taxMinor: 20_000n,
+    categoryId: cat("Contractors"),
+    notes: "Illustrations for the Coastal Plumbing website",
+  });
+  await payBill(database, owner, contractor, {
+    amountMinor: 110_000n,
+    date: addDays(today, -5),
+    accountId: bank.id,
+  });
+  await createBill(database, owner, {
+    supplier: "Harbour Accounting",
+    reference: "HA-1189",
+    issueDate: addDays(today, -30),
+    dueDate: addDays(today, -9),
+    currency: "AUD",
+    totalMinor: 77_000n,
+    taxMinor: 7_000n,
+    categoryId: cat("Office"),
+    notes: "BAS lodgement for last quarter",
+  });
+  return true;
+}
+
+export type SeedResult = { demo: "created" | "updated" | "exists"; home: "created" | "exists" | "skipped" };
 
 export async function seed(
   database: Database,
@@ -151,7 +270,10 @@ export async function seed(
     }
   }
 
-  if (demoExists) return result;
+  if (demoExists) {
+    if (await addLaterSamples(database, today)) result.demo = "updated";
+    return result;
+  }
   result.demo = "created";
   const uid = (email: string) => {
     const id = ids[email];
@@ -873,6 +995,8 @@ export async function seed(
     });
   }
   await closePeriod(database, owner, { startDate: start, endDate: monthEnd(addMonths(today, -4)) });
+
+  await addLaterSamples(database, today);
 
   return result;
 }

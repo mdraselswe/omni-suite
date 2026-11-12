@@ -66,6 +66,24 @@ describe("seed", () => {
     }
     expect(await database.select().from(periods).where(eq(periods.tenantId, tenantId))).toHaveLength(1);
 
+    // A credit note, share links (the gym has no portal login, so its invoice mails carry one).
+    const { invoiceAdjustments, bills } = await import("@/server/db/schema");
+    const notes = await database
+      .select()
+      .from(invoiceAdjustments)
+      .where(eq(invoiceAdjustments.tenantId, tenantId));
+    expect(notes.map((n) => [n.kind, n.number, n.amountMinor])).toEqual([
+      ["credit_note", "CN-0001", 30_000n],
+    ]);
+    const credited = invs.find((i) => i.creditedMinor > 0n);
+    expect(credited && credited.paidMinor + credited.creditedMinor < credited.totalMinor).toBe(true);
+    expect(invs.filter((i) => i.shareToken).length).toBeGreaterThan(1);
+    // Supplier bills: one paid, one part paid, one overdue.
+    expect(await database.select().from(bills).where(eq(bills.tenantId, tenantId))).toHaveLength(3);
+    const { payables } = await import("@/features/bills");
+    const owed = await payables(database, tenantId, day, "AUD");
+    expect(owed.base).toMatchObject({ owedMinor: 187_000n, overdueMinor: 77_000n, count: 2 });
+
     expect(await database.select().from(partners).where(eq(partners.tenantId, tenantId))).toHaveLength(2);
     const rules = await database.select().from(profitRules).where(eq(profitRules.tenantId, tenantId));
     expect(rules.map((r) => r.status)).toEqual(["active"]);

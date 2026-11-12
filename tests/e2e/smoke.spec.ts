@@ -19,6 +19,15 @@ test.describe("public", () => {
     await expectAccessible(page);
   });
 
+  test("a share link that doesn't exist shows the not-found page", async ({ page }) => {
+    // The root loading screen starts the stream first, so the status stays 200 (noindex).
+    for (const path of [`/p/invoice/${"A".repeat(32)}/`, "/p/proposal/not-a-token/"]) {
+      await page.goto(path);
+      await expect(page.getByText("404", { exact: true })).toBeVisible();
+      await expect(page.getByRole("heading", { level: 1 })).not.toContainText("Invoice");
+    }
+  });
+
   test("app pages need a session", async ({ page }) => {
     await page.goto("/demo/finance/");
     await expect(page).toHaveURL(/\/login\//);
@@ -50,6 +59,8 @@ test.describe("owner", () => {
     "/demo/invoices/",
     "/demo/invoices/new/",
     "/demo/invoices/recurring/",
+    "/demo/bills/",
+    "/demo/bills/new/",
     "/demo/projects/",
     "/demo/projects/templates/",
     "/demo/time/",
@@ -87,6 +98,7 @@ test.describe("owner", () => {
       ["/demo/projects/", /\/demo\/projects\/[0-9a-f-]{36}\/?$/],
       ["/demo/team/", /\/demo\/team\/[0-9a-f-]{36}\/?$/],
       ["/demo/partners/", /\/demo\/partners\/[0-9a-f-]{36}\/?$/],
+      ["/demo/bills/", /\/demo\/bills\/[0-9a-f-]{36}\/?$/],
     ] as const) {
       await page.goto(list);
       const href = await page
@@ -102,6 +114,36 @@ test.describe("owner", () => {
       await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
       await expectAccessible(page);
     }
+  });
+
+  test("an invoice's share link opens without signing in", async ({ page, browser }) => {
+    await page.goto("/demo/invoices/?status=all");
+    const hrefs = await page
+      .locator("a[href]")
+      .evaluateAll((links) =>
+        links
+          .map((a) => a.getAttribute("href") ?? "")
+          .filter((h) => /\/demo\/invoices\/[0-9a-f-]{36}\/?$/.test(h)),
+      );
+    let shared = "";
+    for (const href of [...new Set(hrefs)].slice(0, 15)) {
+      await page.goto(href);
+      shared =
+        (await page
+          .getByText(/\/p\/invoice\/[A-Za-z0-9_-]{32}\//)
+          .first()
+          .textContent({ timeout: 500 })
+          .catch(() => null)) ?? "";
+      if (shared) break;
+    }
+    expect(shared, "a sent invoice with a share link").toBeTruthy();
+    const guest = await browser.newContext();
+    const visitor = await guest.newPage();
+    const res = await visitor.goto(new URL(shared.trim()).pathname);
+    expect(res?.status()).toBe(200);
+    await expect(visitor.getByRole("heading", { level: 1 })).toBeVisible();
+    await expectAccessible(visitor);
+    await guest.close();
   });
 
   test("the ledger pages with numbered links and searches as you type", async ({ page }) => {
