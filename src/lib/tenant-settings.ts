@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { SIDEBAR_STYLES, THEME_PRESETS } from "@/config";
 
+/** Who gets the client portal AI assistant. */
+export const PORTAL_ASSISTANT_MODES = ["off", "all", "selected"] as const;
+export type PortalAssistantMode = (typeof PORTAL_ASSISTANT_MODES)[number];
+
 /**
  * Everything a business can configure without code (ADR 0009).
  * Stored as one JSON column on `tenants`, always parsed through this schema,
@@ -62,6 +66,16 @@ export const tenantSettingsSchema = z.object({
       { key: "done", label: "Done", done: true },
     ]),
   disabledModules: z.array(z.string()).default([]),
+  /**
+   * Client portal AI assistant: off, on for every client, or only for the clients listed.
+   * Needs the AI module on and an AI provider key on the server.
+   */
+  portalAssistant: z
+    .object({
+      mode: z.enum(PORTAL_ASSISTANT_MODES).catch("off").default("off"),
+      clientIds: z.array(z.uuid()).max(10_000).catch([]).default([]),
+    })
+    .prefault({}),
   /** Look of the team area and client portal. Empty values use the platform defaults (src/config/site.ts). */
   branding: z
     .object({
@@ -97,4 +111,11 @@ export type TenantSettings = z.infer<typeof tenantSettingsSchema>;
 export function parseTenantSettings(value: unknown): TenantSettings {
   const parsed = tenantSettingsSchema.safeParse(value ?? {});
   return parsed.success ? parsed.data : tenantSettingsSchema.parse({});
+}
+
+/** True when the business gives this client the portal assistant (mode "all", or listed). */
+export function portalAssistantFor(settings: TenantSettings, clientId: string | null): boolean {
+  const { mode, clientIds } = settings.portalAssistant;
+  if (!clientId || mode === "off") return false;
+  return mode === "all" || clientIds.includes(clientId);
 }

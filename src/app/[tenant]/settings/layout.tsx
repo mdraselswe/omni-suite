@@ -5,7 +5,7 @@ import { SubNav } from "@/components/layout/sub-nav";
 import { t } from "@/i18n";
 import { tenantHref } from "@/lib/href";
 import { requireTenant } from "@/server/auth/session";
-import { hasPermission } from "@/server/tenancy/context";
+import { hasPermission, isModuleEnabled } from "@/server/tenancy/context";
 
 export default async function SettingsLayout({ children, params }: LayoutProps<"/[tenant]/settings">) {
   const { tenant } = await params;
@@ -27,6 +27,9 @@ export default async function SettingsLayout({ children, params }: LayoutProps<"
       { href: tenantHref(tenant, "settings/fields"), label: t("settings.customFields") },
       { href: tenantHref(tenant, "settings/pipeline"), label: t("settings.pipeline") },
     );
+    if (isModuleEnabled(ctx, "ai")) {
+      items.push({ href: tenantHref(tenant, "settings/ai"), label: t("assistant.settings.tab") });
+    }
   }
   if (backup) items.push({ href: tenantHref(tenant, "settings/backup"), label: t("settings.backup") });
   if (domains) items.push({ href: tenantHref(tenant, "settings/domains"), label: t("settings.domains") });

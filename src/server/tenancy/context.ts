@@ -1,4 +1,4 @@
-import type { TenantSettings } from "@/lib/tenant-settings";
+import { portalAssistantFor, type TenantSettings } from "@/lib/tenant-settings";
 import { requiredModules } from "@/modules/catalog";
 import type { EffectivePermissions, Scope } from "@/server/rbac/resolve";
 
@@ -30,18 +30,27 @@ export class ForbiddenError extends Error {
   }
 }
 
-/** True when a module the permission needs (its own, or one it requires) is switched off. */
+/** The portal assistant permission, which also needs the business to give it to this client. */
+export const PORTAL_ASSISTANT = "portal.assistant";
+
+/**
+ * True when a module the permission needs (its own, or one it requires) is switched off,
+ * or (portal assistant) the business hasn't given it to this member's client.
+ */
 function switchedOff(ctx: TenantContext, permission: string): boolean {
+  if (permission === PORTAL_ASSISTANT && !portalAssistantFor(ctx.tenant.settings, ctx.membership.clientId)) {
+    return true;
+  }
   const disabled = ctx.tenant.settings.disabledModules;
   return disabled.length > 0 && requiredModules(permission).some((key) => disabled.includes(key));
 }
 
 /**
- * Drops permissions whose modules are switched off, so menus, `hasPermission`
- * and direct `ctx.permissions` reads all agree with the module switches.
+ * Drops permissions whose modules are switched off (and the portal assistant where the
+ * business hasn't given it), so menus, `hasPermission` and `ctx.permissions` all agree.
  */
 export function withModuleGates(ctx: TenantContext): TenantContext {
-  if (ctx.tenant.settings.disabledModules.length === 0) return ctx;
+  if (ctx.tenant.settings.disabledModules.length === 0 && !ctx.permissions.has(PORTAL_ASSISTANT)) return ctx;
   const permissions = new Map([...ctx.permissions].filter(([permission]) => !switchedOff(ctx, permission)));
   return { ...ctx, permissions };
 }

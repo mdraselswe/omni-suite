@@ -108,6 +108,12 @@ const ai: AiConfig = {
   dailyRequestsPerBusiness: 50,
   dailyRequestsPerMember: 20,
   briefMaxLength: 2000,
+  portalAssistant: {
+    dailyQuestionsPerClient: 30,
+    historyMessages: 12,
+    questionMaxLength: 1000,
+    dailyHandoffsPerClient: 5,
+  },
 };
 
 export const aiConfig = aiSchema.parse(ai);

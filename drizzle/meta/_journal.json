@@ -36,6 +36,13 @@
       "when": 1794487013190,
       "tag": "0004_finish",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794499326504,
+      "tag": "0005_portal_assistant",
+      "breakpoints": true
     }
   ]
 }

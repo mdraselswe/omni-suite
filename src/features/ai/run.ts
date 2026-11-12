@@ -47,7 +47,7 @@ export async function runAi<T>(
   try {
     answer = await completer(request.feature, {
       system: request.system,
-      messages: [{ role: "user", content: request.prompt }],
+      messages: [...(request.history ?? []), { role: "user", content: request.prompt }],
       json: { name: request.feature, schema: request.schema },
     });
   } catch (error) {

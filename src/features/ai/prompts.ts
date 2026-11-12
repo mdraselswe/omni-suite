@@ -16,7 +16,12 @@ export type Prompt = {
   prompt: string;
   /** JSON schema the answer must follow. */
   schema: Record<string, unknown>;
+  /** Earlier turns of a conversation, sent before `prompt` (oldest first). */
+  history?: readonly ChatTurn[];
 };
+
+/** One message of a conversation (portal assistant). */
+export type ChatTurn = { role: "user" | "assistant"; content: string };
 
 const SHARED_RULES =
   "Write in plain, friendly English for a small business. Be concrete and brief. " +

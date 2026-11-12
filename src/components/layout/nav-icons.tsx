@@ -13,6 +13,7 @@ import {
   Receipt,
   Settings,
   Shield,
+  Sparkles,
   Target,
   Users,
   Wallet,
@@ -38,4 +39,5 @@ export const NAV_ICONS: Record<IconName, LucideIcon> = {
   cloud: Cloud,
   globe: Globe,
   clipboard: ClipboardList,
+  sparkles: Sparkles,
 };

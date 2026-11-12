@@ -150,7 +150,7 @@ export type AiProviderId = (typeof AI_PROVIDERS)[number];
 export type ChatProviderId = Exclude<AiProviderId, "anthropic">;
 
 /** Features that call AI. Each can pick its own provider and model in src/config/ai.ts. */
-export const AI_FEATURES = ["proposalDraft", "insights"] as const;
+export const AI_FEATURES = ["proposalDraft", "insights", "portalAssistant"] as const;
 export type AiFeature = (typeof AI_FEATURES)[number];
 
 export const AI_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -225,6 +225,17 @@ export const aiSchema = z.object({
   dailyRequestsPerMember: z.number().int().min(0),
   /** Longest brief a member can type for a proposal draft. */
   briefMaxLength: z.number().int().positive(),
+  /** The client portal assistant (who gets it is set per business in Settings → AI assistant). */
+  portalAssistant: z.object({
+    /** Questions one client (all its portal users together) may ask per day. */
+    dailyQuestionsPerClient: z.number().int().min(0),
+    /** Earlier messages sent along with each question, so follow-ups make sense. */
+    historyMessages: z.number().int().min(0).max(40),
+    /** Longest question a client can type. */
+    questionMaxLength: z.number().int().positive(),
+    /** Questions one client may pass to the team per day ("Send to the team"). */
+    dailyHandoffsPerClient: z.number().int().min(0),
+  }),
 });
 
 export type AiConfig = z.infer<typeof aiSchema>;

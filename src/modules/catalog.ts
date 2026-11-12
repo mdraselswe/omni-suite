@@ -51,7 +51,8 @@ export type IconName =
   | "history"
   | "cloud"
   | "globe"
-  | "clipboard";
+  | "clipboard"
+  | "sparkles";
 
 export type NavItem = {
   /** Path below the tenant base, e.g. "finance" → /<tenant>/finance. "" is the home. */
@@ -386,8 +387,21 @@ export const MODULES: readonly ModuleDef[] = [
     key: "ai",
     label: "module.ai",
     optional: true,
-    permissions: [internal("ai.use", "perm.ai.use", { ...owners, manager: "all" })],
-    nav: [],
+    permissions: [
+      internal("ai.use", "perm.ai.use", { ...owners, manager: "all" }),
+      // Also needs the business to give the assistant to the client (Settings → AI assistant).
+      client("portal.assistant", "perm.portal.assistant", { client_owner: "all", client_member: "all" }),
+    ],
+    nav: [
+      {
+        path: "portal/assistant",
+        group: "overview",
+        label: "nav.portal.assistant",
+        icon: "sparkles",
+        permission: "portal.assistant",
+        area: "portal",
+      },
+    ],
   },
   {
     key: "portal",

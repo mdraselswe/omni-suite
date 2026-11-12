@@ -15,6 +15,7 @@ import { enPayments } from "./en-payments";
 import { enPortalAccess } from "./en-portal-access";
 import { enPortalWork } from "./en-portal-work";
 import { enSecurity } from "./en-security";
+import { enAssistant } from "./en-assistant";
 import { enShare } from "./en-share";
 import { enUi1 } from "./en-ui-1";
 import { enUi2 } from "./en-ui-2";
@@ -53,6 +54,7 @@ export const en = {
   ...enCredit,
   ...enImports,
   ...enShare,
+  ...enAssistant,
   "a11y.skip": "Skip to content",
   "nav.home": "Home",
   "nav.about": "About",
