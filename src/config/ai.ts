@@ -1,25 +1,36 @@
+import { aiSchema, type AiConfig } from "./schema.ts";
+
 /**
- * ✏️ AI assistant settings. The Claude API key is ANTHROPIC_API_KEY (src/config/env.ts);
- * without it every AI feature is hidden.
+ * ✏️ AI assistant settings. API keys live in env (src/config/env.ts): a feature is
+ * hidden until the provider it uses has its key. See docs/configuration.md → AI providers.
  */
-export const aiConfig = {
-  /** Claude model id (see the Claude API docs for current models). */
-  model: "claude-opus-5-5",
-  /** Thinking depth and token spend: "low" | "medium" | "high" | "xhigh" | "max". */
-  effort: "medium",
-  /** Hard cap on one answer's length (tokens). */
+const ai: AiConfig = {
+  defaultProvider: "anthropic",
+  providers: {
+    anthropic: {
+      /** Claude model id (see the Claude API docs for current models). */
+      model: "claude-opus-5-5",
+      effort: "medium",
+    },
+    /** Off until OPENAI_COMPATIBLE_API_KEY is set and a feature (or the default) picks it. */
+    "openai-compatible": {
+      baseUrl: "https://api.openai.com/v1",
+      model: "gpt-5-mini",
+      jsonMode: "json_schema",
+      tokenLimitParam: "max_completion_tokens",
+    },
+  },
+  /**
+   * Per-feature overrides, e.g.
+   *   insights: { model: "claude-haiku-5-5" },
+   *   proposalDraft: { provider: "openai-compatible", model: "gpt-5-mini" },
+   */
+  features: {},
   maxTokens: 16000,
-  /** Give up on a request after this long (milliseconds). */
   timeoutMs: 90_000,
-  /** AI requests each business may make per day (its own timezone). */
   dailyRequestsPerBusiness: 50,
-  /** Longest brief a member can type for a proposal draft. */
+  dailyRequestsPerMember: 20,
   briefMaxLength: 2000,
-} as const satisfies {
-  model: string;
-  effort: "low" | "medium" | "high" | "xhigh" | "max";
-  maxTokens: number;
-  timeoutMs: number;
-  dailyRequestsPerBusiness: number;
-  briefMaxLength: number;
 };
+
+export const aiConfig = aiSchema.parse(ai);

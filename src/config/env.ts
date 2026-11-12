@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { RENDER_MODES } from "./schema.ts";
+import { FX_PROVIDERS, RENDER_MODES } from "./schema.ts";
 
 /**
  * The only place that reads process.env (ESLint enforces this).
@@ -82,6 +82,11 @@ const serverSchema = z.object({
     .enum(["true", "false", "1", "0", ""])
     .optional()
     .transform((v) => v !== "false" && v !== "0"),
+  /**
+   * Shared secret for Caddy's on-demand TLS check (/api/domains/allowed?secret=…).
+   * Empty: the check only answers requests that don't come in through a public host.
+   */
+  DOMAIN_CHECK_SECRET: z.string().default(""),
   /** Max upload size in megabytes. */
   MAX_UPLOAD_MB: z.coerce.number().int().positive().default(25),
 
@@ -98,8 +103,16 @@ const serverSchema = z.object({
   XERO_CLIENT_ID: z.string().default(""),
   XERO_CLIENT_SECRET: z.string().default(""),
 
-  /** Claude API key (platform.claude.com). Empty = AI features off. */
+  /** Claude API key (platform.claude.com). Empty = features that use Claude are off. */
   ANTHROPIC_API_KEY: z.string().default(""),
+  /**
+   * Key for the "openai-compatible" AI provider (OpenAI, OpenRouter, Groq, DeepSeek,
+   * Gemini…; any non-empty value for a local Ollama). Empty = that provider is off.
+   */
+  OPENAI_COMPATIBLE_API_KEY: z.string().default(""),
+
+  /** Exchange-rate source for "Use today's rate" (default: src/config/regional.ts). "off" hides it. */
+  FX_PROVIDER: z.enum(FX_PROVIDERS).optional(),
 });
 
 export const publicEnv = publicSchema.parse({
@@ -128,16 +141,40 @@ export const serverEnv = (): ServerEnv => {
  * that is reachable from outside (production mode and an APP_URL that isn't a
  * local host). Local `pnpm start` and the e2e run on localhost stay allowed.
  */
+function isPublicProduction(appUrl: string, nodeEnv: string): boolean {
+  if (nodeEnv !== "production") return false;
+  const host = new URL(appUrl).hostname;
+  return !(host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host.endsWith(".localhost"));
+}
+
 export function insecureSecrets(
   env: Pick<ServerEnv, "APP_URL" | "BETTER_AUTH_SECRET" | "ENCRYPTION_KEY">,
   nodeEnv: string = buildEnv.NODE_ENV,
 ): string[] {
-  if (nodeEnv !== "production") return [];
-  const host = new URL(env.APP_URL).hostname;
-  if (host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host.endsWith(".localhost")) {
-    return [];
-  }
+  if (!isPublicProduction(env.APP_URL, nodeEnv)) return [];
   return (Object.keys(DEV_SECRETS) as (keyof typeof DEV_SECRETS)[]).filter(
     (name) => env[name] === DEV_SECRETS[name],
   );
+}
+
+/** Shortest BETTER_AUTH_SECRET / DOMAIN_CHECK_SECRET a public production server accepts. */
+export const MIN_SECRET_LENGTH = 32;
+
+/**
+ * Secrets too weak to use: ENCRYPTION_KEY must always decode to 32 bytes (AES-256),
+ * and on a public production server BETTER_AUTH_SECRET (and DOMAIN_CHECK_SECRET,
+ * when set) must be at least MIN_SECRET_LENGTH characters. Checked at boot.
+ */
+export function weakSecrets(
+  env: Pick<ServerEnv, "APP_URL" | "BETTER_AUTH_SECRET" | "ENCRYPTION_KEY" | "DOMAIN_CHECK_SECRET">,
+  nodeEnv: string = buildEnv.NODE_ENV,
+): string[] {
+  const weak: string[] = [];
+  if (Buffer.from(env.ENCRYPTION_KEY, "base64").length !== 32) weak.push("ENCRYPTION_KEY");
+  if (!isPublicProduction(env.APP_URL, nodeEnv)) return weak;
+  if (env.BETTER_AUTH_SECRET.length < MIN_SECRET_LENGTH) weak.push("BETTER_AUTH_SECRET");
+  if (env.DOMAIN_CHECK_SECRET !== "" && env.DOMAIN_CHECK_SECRET.length < MIN_SECRET_LENGTH) {
+    weak.push("DOMAIN_CHECK_SECRET");
+  }
+  return weak;
 }

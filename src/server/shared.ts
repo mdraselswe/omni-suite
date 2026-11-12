@@ -1,18 +1,25 @@
 import "server-only";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { limits } from "@/config";
 import type { CustomFieldDef } from "@/lib/custom-fields";
 import type { DbOrTx } from "@/server/db";
 import {
   customFieldDefs,
+  memberOverrides,
   memberRoles,
   memberships,
   notifications,
   rolePermissions,
   tenantCounters,
+  tenants,
   user,
 } from "@/server/db/schema";
+import { parseTenantSettings } from "@/lib/tenant-settings";
+import { t } from "@/i18n";
+import { UserError } from "@/server/action";
 import { enqueue } from "@/server/jobs/queue";
 import { appUrl, type MailMessage } from "@/server/mail";
+import { takeBusinessMail, takeRecipientMail } from "@/server/mail-quota";
 
 /** Next value of a per-tenant counter (invoice and proposal numbers). Safe under concurrency. */
 export async function nextCounter(tx: DbOrTx, tenantId: string, key: string): Promise<number> {
@@ -48,13 +55,39 @@ export const MAIL_JOB = "mail.send";
  * Queues an email as a job in the same transaction: it is sent only if the
  * transaction commits, and retried if SMTP fails or the server restarts.
  * App-relative links ("/acme/…" on their own line, or href="/…") become absolute URLs.
+ *
+ * Mail a business triggers must pass its `tenantId`: it counts against the business's
+ * hourly and daily quota (src/config/limits.ts). Over the quota it throws a UserError
+ * (the transaction rolls back), or with `onLimit: "skip"` returns false and sends nothing.
+ * Mail without a business is throttled per recipient instead.
  */
 export async function queueMail(
   tx: DbOrTx,
   mail: { to: string; subject: string; text: string; html?: string },
-): Promise<void> {
+  options: { tenantId?: string; onLimit?: "throw" | "skip" } = {},
+): Promise<boolean> {
+  const onLimit = options.onLimit ?? "throw";
+  if (options.tenantId) {
+    if (!(await takeBusinessMail(tx, options.tenantId, onLimit))) return false;
+  } else if (!(await takeRecipientMail(tx, mail.to))) {
+    if (onLimit === "skip") return false;
+    throw new UserError(t("security.mailLimitHour", { limit: limits.mail.perRecipientPerHour }));
+  }
   const payload: MailMessage = absoluteLinks(mail);
-  await enqueue(tx, { type: MAIL_JOB, payload });
+  if (options.tenantId) {
+    // Business mail: sent under the business's name, replies go to its own address.
+    const [row] = await tx
+      .select({ name: tenants.name, settings: tenants.settings })
+      .from(tenants)
+      .where(eq(tenants.id, options.tenantId));
+    if (row) {
+      const settings = parseTenantSettings(row.settings);
+      payload.fromName = (settings.branding.displayName || row.name).slice(0, 80);
+      if (settings.replyToEmail) payload.replyTo = settings.replyToEmail;
+    }
+  }
+  await enqueue(tx, { type: MAIL_JOB, tenantId: options.tenantId ?? null, payload });
+  return true;
 }
 
 /** In-app notifications (and optionally an email) for a list of users. */
@@ -79,13 +112,18 @@ export async function notify(
     const recipients = await tx.select({ email: user.email }).from(user).where(inArray(user.id, ids));
     const link = message.link?.startsWith("/") ? appUrl(message.link) : (message.link ?? "");
     for (const r of recipients) {
-      await queueMail(tx, {
-        to: r.email,
-        subject: message.title,
-        text: `${message.body ?? ""}
+      // Over the business's mail quota the in-app notification still arrives; the email is skipped.
+      await queueMail(
+        tx,
+        {
+          to: r.email,
+          subject: message.title,
+          text: `${message.body ?? ""}
 
 ${link}`.trim(),
-      });
+        },
+        { tenantId, onLimit: "skip" },
+      );
     }
   }
 }
@@ -147,8 +185,29 @@ export async function usersWithPermission(
   return rows.map((r) => r.userId);
 }
 
-/** User ids of a client's portal users. */
-export async function clientUserIds(database: DbOrTx, tenantId: string, clientId: string): Promise<string[]> {
+/**
+ * User ids of a client's active portal users. With `permission`, only those who
+ * hold it and can open the portal at all (`portal.access`): a role grant or an
+ * allow override, and no deny override. So nobody is emailed a link they can't open.
+ */
+export async function clientUserIds(
+  database: DbOrTx,
+  tenantId: string,
+  clientId: string,
+  permission?: string,
+): Promise<string[]> {
+  const live = sql`(${memberOverrides.expiresAt} is null or ${memberOverrides.expiresAt} > now())`;
+  const holds = (p: string) => sql`(
+        (exists (select 1 from ${memberRoles}
+          inner join ${rolePermissions} on ${rolePermissions.roleId} = ${memberRoles.roleId}
+          where ${memberRoles.membershipId} = ${memberships.id} and ${rolePermissions.permission} = ${p})
+        or exists (select 1 from ${memberOverrides}
+          where ${memberOverrides.membershipId} = ${memberships.id} and ${memberOverrides.permission} = ${p}
+          and ${memberOverrides.effect} = 'allow' and ${live}))
+        and not exists (select 1 from ${memberOverrides}
+          where ${memberOverrides.membershipId} = ${memberships.id} and ${memberOverrides.permission} = ${p}
+          and ${memberOverrides.effect} = 'deny' and ${live})
+      )`;
   const rows = await database
     .select({ userId: memberships.userId })
     .from(memberships)
@@ -158,6 +217,7 @@ export async function clientUserIds(database: DbOrTx, tenantId: string, clientId
         eq(memberships.kind, "client"),
         eq(memberships.clientId, clientId),
         eq(memberships.status, "active"),
+        permission ? and(holds("portal.access"), holds(permission)) : undefined,
       ),
     );
   return rows.map((r) => r.userId);

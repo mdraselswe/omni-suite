@@ -130,10 +130,12 @@ describe("queued mail", () => {
       });
     });
     const [job] = await jobRows(MAIL_JOB);
+    // Business mail goes out under the business's name.
     expect(job?.payload).toEqual({
       to: "owner@jobs.test",
       subject: "Invoice sent",
       text: "Have a look.\n\nhttps://app.test/jobs/invoices/1",
+      fromName: "Biz jobs",
     });
     expect(sendMail).not.toHaveBeenCalled();
   });
@@ -244,5 +246,24 @@ describe("backup outbox", () => {
     expect(sync).toHaveLength(1);
     expect(sync[0]?.runAt.getTime()).toBeGreaterThanOrEqual(before + BACKUP_SYNC_DELAY_MS - 1000);
     await database.delete(googleConnections).where(and(eq(googleConnections.tenantId, tenantId)));
+  });
+});
+
+describe("business mail", () => {
+  it("uses the business's display name and reply-to address", async () => {
+    const { queueMail, MAIL_JOB } = await import("@/server/shared");
+    const { tenants } = await import("@/server/db/schema");
+    const { eq } = await import("drizzle-orm");
+    const [row] = await database.select().from(tenants).where(eq(tenants.id, tenantId));
+    const settings = {
+      ...(row?.settings as object),
+      replyToEmail: "accounts@biz.test",
+      branding: { displayName: "Biz Studio" },
+    };
+    await database.update(tenants).set({ settings }).where(eq(tenants.id, tenantId));
+    await queueMail(database, { to: "c@example.com", subject: "Hi", text: "Hello" }, { tenantId });
+    const [job] = await jobRows(MAIL_JOB);
+    expect(job?.payload).toMatchObject({ fromName: "Biz Studio", replyTo: "accounts@biz.test" });
+    await database.update(tenants).set({ settings: row?.settings }).where(eq(tenants.id, tenantId));
   });
 });

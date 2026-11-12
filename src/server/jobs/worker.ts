@@ -1,6 +1,7 @@
 import "server-only";
 import { db } from "@/server/db";
 import { createHandlers, scheduleRecurring } from "./handlers";
+import { pruneCounters } from "@/server/rate-limit";
 import { pruneJobs, recoverStaleJobs, runOneJob } from "./queue";
 
 const POLL_MS = 5_000;
@@ -42,6 +43,7 @@ export function startWorker(): void {
     await step("recover", () => recoverStaleJobs(db()));
     await step("schedule", () => scheduleRecurring(db(), new Date()));
     await step("prune", () => pruneJobs(db()));
+    await step("prune counters", () => pruneCounters(db()));
   };
 
   setInterval(() => void drain(), POLL_MS).unref();

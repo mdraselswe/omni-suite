@@ -19,6 +19,10 @@ export const clients = pgTable(
     tenantId: tenantRef(),
     name: text("name").notNull(),
     email: text("email").notNull().default(""),
+    /** The person to greet in emails (blank: the client's name). */
+    contactName: text("contact_name").notNull().default(""),
+    /** Where invoices and receipts go (blank: the main email). */
+    billingEmail: text("billing_email").notNull().default(""),
     phone: text("phone").notNull().default(""),
     website: text("website").notNull().default(""),
     address: text("address").notNull().default(""),
@@ -47,6 +51,8 @@ export const leads = pgTable(
     stage: text("stage").notNull(),
     valueMinor: money("value_minor"),
     notes: text("notes").notNull().default(""),
+    /** The day to get back to this lead (shown as due on the board and dashboard). */
+    followUpDate: day("follow_up_date"),
     clientId: uuid("client_id").references(() => clients.id, { onDelete: "set null" }),
     ownerMembershipId: uuid("owner_membership_id").references(() => memberships.id, { onDelete: "set null" }),
     custom: custom(),
@@ -115,6 +121,8 @@ export const proposals = pgTable(
     subtotalMinor: money("subtotal_minor"),
     taxMinor: money("tax_minor"),
     totalMinor: money("total_minor"),
+    /** Whether line prices included tax when the proposal was made. */
+    pricesIncludeTax: boolean("prices_include_tax").notNull().default(false),
     status: text("status", { enum: ["draft", "sent", "accepted", "declined"] })
       .notNull()
       .default("draft"),
@@ -122,6 +130,8 @@ export const proposals = pgTable(
     respondedAt: ts("responded_at"),
     respondedByName: text("responded_by_name"),
     respondedIp: text("responded_ip"),
+    /** The client's optional reason when they declined (shown to staff). */
+    declineReason: text("decline_reason").notNull().default(""),
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
     createdAt: createdAt(),
   },
@@ -151,6 +161,15 @@ export const invoices = pgTable(
     taxMinor: money("tax_minor"),
     totalMinor: money("total_minor"),
     paidMinor: money("paid_minor"),
+    /** Unpaid amount written off as a bad debt or discount (no longer owed). */
+    writtenOffMinor: money("written_off_minor"),
+    /** When the unpaid balance was written off (client statements show it on this day). */
+    writtenOffDate: day("written_off_date"),
+    /** Payment reminders sent so far, and the day the next one is due (null: none planned). */
+    reminderCount: integer("reminder_count").notNull().default(0),
+    nextReminderOn: day("next_reminder_on"),
+    /** Whether line prices included tax when the invoice was made (settings can change later). */
+    pricesIncludeTax: boolean("prices_include_tax").notNull().default(false),
     notes: text("notes").notNull().default(""),
     recurringId: uuid("recurring_id"),
     proposalId: uuid("proposal_id"),
@@ -200,6 +219,8 @@ export const recurringInvoices = pgTable(
     name: text("name").notNull(),
     intervalMonths: integer("interval_months").notNull().default(1),
     nextRunDate: day("next_run_date").notNull(),
+    /** Day of the month to bill on (31 = always the last day), so short months don't shift later runs. */
+    anchorDay: integer("anchor_day"),
     items: jsonb("items").$type<LineItem[]>().notNull().default([]),
     currency: text("currency").notNull(),
     active: boolean("active").notNull().default(true),
@@ -217,7 +238,10 @@ export const projectTemplates = pgTable(
     id: pk(),
     tenantId: tenantRef(),
     name: text("name").notNull(),
-    tasks: jsonb("tasks").$type<{ title: string; clientVisible: boolean }[]>().notNull().default([]),
+    tasks: jsonb("tasks")
+      .$type<{ title: string; clientVisible: boolean; needsApproval?: boolean }[]>()
+      .notNull()
+      .default([]),
     createdAt: createdAt(),
   },
   (t) => [index("project_templates_tenant_idx").on(t.tenantId)],
@@ -235,6 +259,8 @@ export const projects = pgTable(
     startDate: day("start_date"),
     dueDate: day("due_date"),
     budgetMinor: money("budget_minor"),
+    /** The accepted proposal this project delivers, if it started from one. */
+    proposalId: uuid("proposal_id"),
     custom: custom(),
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
     createdAt: createdAt(),

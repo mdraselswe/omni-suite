@@ -9,7 +9,23 @@ function transport(): Transporter {
   return globalForMail.__omnisuiteMail;
 }
 
-export type MailMessage = { to: string; subject: string; text: string; html?: string };
+export type MailMessage = {
+  to: string;
+  subject: string;
+  text: string;
+  html?: string;
+  /** Where replies go (the business's own address). */
+  replyTo?: string;
+  /** Sender name shown to the recipient (the address stays MAIL_FROM's). */
+  fromName?: string;
+};
+
+/** MAIL_FROM with another display name: "Harbour Studio <no-reply@app>". */
+function fromWithName(mailFrom: string, name: string | undefined) {
+  if (!name) return mailFrom;
+  const address = /<([^>]+)>/.exec(mailFrom)?.[1] ?? mailFrom.trim();
+  return { name: name.replace(/[\r\n<>"]/g, "").slice(0, 80), address };
+}
 
 /**
  * Sends an email now. Failures are logged, never thrown: mail must not break the
@@ -20,7 +36,12 @@ export type MailMessage = { to: string; subject: string; text: string; html?: st
  */
 export async function sendMail(message: MailMessage & { messageId?: string }): Promise<boolean> {
   try {
-    await transport().sendMail({ from: serverEnv().MAIL_FROM, ...message });
+    const { fromName, replyTo, ...rest } = message;
+    await transport().sendMail({
+      ...rest,
+      from: fromWithName(serverEnv().MAIL_FROM, fromName),
+      ...(replyTo ? { replyTo } : {}),
+    });
     return true;
   } catch (error) {
     console.error("[mail] send failed", error);

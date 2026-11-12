@@ -42,7 +42,7 @@ export async function accountOptions(database: DbOrTx, tenantId: string) {
     .from(accounts)
     .where(and(eq(accounts.tenantId, tenantId), eq(accounts.archived, false)))
     .orderBy(asc(accounts.createdAt));
-  return rows.map((r) => ({ value: r.value, label: `${r.name} (${r.currency})` }));
+  return rows.map((r) => ({ value: r.value, label: `${r.name} (${r.currency})`, currency: r.currency }));
 }
 
 export async function categoryOptions(database: DbOrTx, tenantId: string) {

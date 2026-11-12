@@ -2,19 +2,24 @@
 import { eq } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Database } from "@/server/db";
+import { browserHash, cleanBrowserHash, newBrowserNonce } from "./handoff-browser";
 
 let database: Database;
 let ownerId: string;
+let tenantId: string;
+
+const nonce = newBrowserNonce();
+const browser = browserHash(nonce);
 
 beforeAll(async () => {
   const { createTestDb, setupTenant } = await import("@/server/testing/db");
   database = await createTestDb();
-  ({ ownerId } = await setupTenant(database, "hand"));
+  ({ ownerId, tenantId } = await setupTenant(database, "hand"));
   await setupTenant(database, "other");
 });
 
 describe("custom-domain handoff", () => {
-  it("mints tokens only for active members of the domain's business", async () => {
+  it("mints tokens only for active members of the domain's business, from a browser with a nonce", async () => {
     const { addMember, createUser } = await import("@/server/testing/db");
     const { createHandoffToken, isActiveMember, memberBusinessName } = await import("./handoff-access");
     const { memberships } = await import("@/server/db/schema");
@@ -25,57 +30,85 @@ describe("custom-domain handoff", () => {
     expect(await isActiveMember(database, ownerId, "other")).toBe(false);
     // An attacker-controlled domain of another business can't get a token for this user.
     expect(
-      await createHandoffToken(database, { userId: ownerId, host: "evil.test", slug: "other" }),
+      await createHandoffToken(database, { userId: ownerId, host: "evil.test", slug: "other", browser }),
     ).toBeNull();
     expect(
-      await createHandoffToken(database, { userId: outsider, host: "shop.test", slug: "hand" }),
+      await createHandoffToken(database, { userId: outsider, host: "shop.test", slug: "hand", browser }),
     ).toBeNull();
-    expect(await createHandoffToken(database, { userId: staffId, host: "shop.test", slug: "hand" })).toEqual(
-      expect.any(String),
-    );
+    // No browser nonce: the handoff wasn't started from the domain's /login.
+    expect(
+      await createHandoffToken(database, { userId: staffId, host: "shop.test", slug: "hand", browser: "" }),
+    ).toBeNull();
+    expect(
+      await createHandoffToken(database, { userId: staffId, host: "shop.test", slug: "hand", browser }),
+    ).toEqual(expect.any(String));
 
     await database.update(memberships).set({ status: "disabled" }).where(eq(memberships.id, membershipId));
     expect(
-      await createHandoffToken(database, { userId: staffId, host: "shop.test", slug: "hand" }),
+      await createHandoffToken(database, { userId: staffId, host: "shop.test", slug: "hand", browser }),
     ).toBeNull();
   });
 
-  it("redeems a token once, only on its own host, before it expires", async () => {
+  it("redeems a token once, only on its own host and in the browser that started it", async () => {
     const { createHandoffToken, redeemHandoffToken } = await import("./handoff-access");
     const { verification } = await import("@/server/db/schema");
-    const grant = { userId: ownerId, host: "shop.test", slug: "hand" };
+    const grant = { userId: ownerId, host: "shop.test", slug: "hand", browser };
 
     const wrongHost = await createHandoffToken(database, grant);
-    expect(await redeemHandoffToken(database, wrongHost ?? "", "evil.test")).toBeNull();
+    expect(await redeemHandoffToken(database, wrongHost ?? "", "evil.test", nonce)).toBeNull();
     // A failed attempt still burns the token.
-    expect(await redeemHandoffToken(database, wrongHost ?? "", "shop.test")).toBeNull();
+    expect(await redeemHandoffToken(database, wrongHost ?? "", "shop.test", nonce)).toBeNull();
+
+    // Login CSRF: someone else's browser (another nonce, or none) can't finish this handoff.
+    const csrf = await createHandoffToken(database, grant);
+    expect(await redeemHandoffToken(database, csrf ?? "", "shop.test", newBrowserNonce())).toBeNull();
+    const noCookie = await createHandoffToken(database, grant);
+    expect(await redeemHandoffToken(database, noCookie ?? "", "shop.test", "")).toBeNull();
 
     const token = await createHandoffToken(database, grant);
-    expect(await redeemHandoffToken(database, token ?? "", "shop.test")).toEqual(grant);
-    expect(await redeemHandoffToken(database, token ?? "", "shop.test")).toBeNull();
-    expect(await redeemHandoffToken(database, "made-up", "shop.test")).toBeNull();
+    expect(await redeemHandoffToken(database, token ?? "", "shop.test", nonce)).toEqual({
+      ...grant,
+      tenantId,
+    });
+    expect(await redeemHandoffToken(database, token ?? "", "shop.test", nonce)).toBeNull();
+    expect(await redeemHandoffToken(database, "made-up", "shop.test", nonce)).toBeNull();
 
     const late = await createHandoffToken(database, grant);
     await database.update(verification).set({ expiresAt: new Date(Date.now() - 1000) });
-    expect(await redeemHandoffToken(database, late ?? "", "shop.test")).toBeNull();
+    expect(await redeemHandoffToken(database, late ?? "", "shop.test", nonce)).toBeNull();
   });
 
-  it("remembers which business a handoff session belongs to and keeps the binding alive", async () => {
-    const { bindSessionToTenant, boundTenantOf } = await import("./handoff-access");
-    const { verification } = await import("@/server/db/schema");
-    const expiresAt = new Date(Date.now() + 30 * 86_400_000);
-    expect(await boundTenantOf(database, { id: "plain-session", expiresAt })).toBeNull();
+  it("reads the binding from the session row itself", async () => {
+    const { boundTenantIdOf } = await import("./handoff-access");
+    expect(boundTenantIdOf({ id: "s", boundTenantId: tenantId })).toBe(tenantId);
+    expect(boundTenantIdOf({ id: "s", boundTenantId: null })).toBeNull();
+    expect(boundTenantIdOf({ id: "s" })).toBeNull();
+    expect(boundTenantIdOf({ id: "s", boundTenantId: "" })).toBeNull();
+  });
 
-    await bindSessionToTenant(database, "bound-session", "hand", expiresAt);
-    expect(await boundTenantOf(database, { id: "bound-session", expiresAt })).toBe("hand");
+  it("signs out sessions that were bound the old (purgeable) way", async () => {
+    const { revokeLegacyBoundSessions } = await import("./handoff-access");
+    const { session, verification } = await import("@/server/db/schema");
+    const expiresAt = new Date(Date.now() + 86_400_000);
+    await database.insert(session).values([
+      { id: "legacy-bound", token: "t1", userId: ownerId, expiresAt },
+      { id: "plain", token: "t2", userId: ownerId, expiresAt },
+    ]);
+    await database.insert(verification).values({
+      id: "v-legacy",
+      identifier: "session-tenant:legacy-bound",
+      value: "hand",
+      expiresAt,
+    });
+    expect(await revokeLegacyBoundSessions(database)).toBe(1);
+    const left = await database.select({ id: session.id }).from(session);
+    expect(left.map((s) => s.id)).toEqual(["plain"]);
+    expect(await revokeLegacyBoundSessions(database)).toBe(0);
+  });
 
-    // The session was refreshed far beyond the binding: the binding is pushed forward, never dropped.
-    const refreshed = new Date(Date.now() + 365 * 86_400_000);
-    expect(await boundTenantOf(database, { id: "bound-session", expiresAt: refreshed })).toBe("hand");
-    const [row] = await database
-      .select()
-      .from(verification)
-      .where(eq(verification.identifier, "session-tenant:bound-session"));
-    expect(row && row.expiresAt > refreshed).toBe(true);
+  it("accepts only well-formed browser hashes", () => {
+    expect(cleanBrowserHash(browser)).toBe(browser);
+    expect(cleanBrowserHash("short")).toBe("");
+    expect(cleanBrowserHash(undefined)).toBe("");
   });
 });

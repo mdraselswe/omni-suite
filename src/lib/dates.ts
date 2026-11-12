@@ -47,6 +47,16 @@ export function addMonths(iso: string, months: number): string {
   return fmt(d);
 }
 
+/**
+ * `months` after `iso`, on `anchorDay` (or the month's last day when it's shorter).
+ * Keeps a schedule on the 31st at month ends instead of drifting to the 28th.
+ */
+export function addMonthsAnchored(iso: string, months: number, anchorDay: number): string {
+  const moved = addMonths(`${iso.slice(0, 7)}-01`, months);
+  const last = Number(monthEnd(moved).slice(8, 10));
+  return `${moved.slice(0, 8)}${String(Math.min(Math.max(1, anchorDay), last)).padStart(2, "0")}`;
+}
+
 export function monthStart(iso: string): string {
   return `${iso.slice(0, 7)}-01`;
 }

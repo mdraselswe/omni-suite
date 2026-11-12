@@ -143,8 +143,8 @@ export function toTable(rows: readonly Record<string, unknown>[]): string[][] {
 
 export function toCsv(table: readonly string[][]): string {
   const esc = (v: string) => {
-    // Neutralise spreadsheet formulas (CSV injection).
-    const safe = /^[=+\-@\t\r]/.test(v) ? `'${v}` : v;
+    // Neutralise spreadsheet formulas (CSV injection); plain numbers like -12.50 stay numbers.
+    const safe = /^[=+\-@\t\r]/.test(v) && !/^-?\d+(\.\d+)?$/.test(v) ? `'${v}` : v;
     return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
   };
   return table.map((row) => row.map(esc).join(",")).join("\r\n");

@@ -1,5 +1,7 @@
 import "server-only";
-import { insecureSecrets, serverEnv } from "@/config/env";
+import { insecureSecrets, MIN_SECRET_LENGTH, serverEnv, weakSecrets } from "@/config/env";
+import { revokeLegacyBoundSessions } from "@/server/auth/handoff-access";
+import { db } from "@/server/db";
 import { runMigrations } from "@/server/db/migrate";
 import { startWorker } from "@/server/jobs/worker";
 
@@ -23,6 +25,13 @@ export async function boot(): Promise<void> {
         `Set random values in .env.production (see .env.example) and restart.`,
     );
   }
+  const weak = weakSecrets(env);
+  if (weak.length > 0) {
+    fatal(
+      `${weak.join(" and ")} too weak: ENCRYPTION_KEY must be 32 random bytes (base64), ` +
+        `secrets at least ${MIN_SECRET_LENGTH} random characters. See .env.example.`,
+    );
+  }
   if (env.AUTO_MIGRATE) {
     try {
       await runMigrations();
@@ -32,6 +41,14 @@ export async function boot(): Promise<void> {
         error,
       );
     }
+  }
+  try {
+    // Custom-domain sessions bound the old way (a purgeable row) must sign in again.
+    const revoked = await revokeLegacyBoundSessions(db());
+    if (revoked > 0) console.warn(`[boot] signed out ${revoked} custom-domain session(s) bound the old way`);
+  } catch (error) {
+    // Fail closed: such a session would otherwise work in every business.
+    fatal("Could not sign out custom-domain sessions bound the old way.", error);
   }
   if (env.WORKER_ENABLED) startWorker();
 }

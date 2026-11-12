@@ -59,6 +59,8 @@ export async function suggestSlug(database: DbOrTx, name: string): Promise<strin
 }
 
 const DEFAULT_EXPENSE_CATEGORIES = [
+  "Salaries",
+  "Rent",
   "Software & tools",
   "Advertising",
   "Contractors",
@@ -127,9 +129,9 @@ export async function createTenant(
       tasks: [
         { title: "Discovery", clientVisible: true },
         { title: "Sitemap", clientVisible: true },
-        { title: "Design", clientVisible: true },
+        { title: "Design", clientVisible: true, needsApproval: true },
         { title: "Build", clientVisible: false },
-        { title: "Client review", clientVisible: true },
+        { title: "Client review", clientVisible: true, needsApproval: true },
         { title: "Launch", clientVisible: true },
         { title: "Handover", clientVisible: true },
       ],

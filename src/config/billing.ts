@@ -10,9 +10,27 @@ const billing: BillingConfig = {
   stripeApiVersion: "2026-10-28.endive",
   trialDays: 30,
   plans: [
-    { key: "starter", price: { amount: 29, currency: "AUD" }, maxMembers: 3, highlighted: false },
-    { key: "growth", price: { amount: 79, currency: "AUD" }, maxMembers: 15, highlighted: true },
-    { key: "scale", price: { amount: 199, currency: "AUD" }, maxMembers: null, highlighted: false },
+    {
+      key: "starter",
+      price: { amount: 29, currency: "AUD" },
+      maxMembers: 3,
+      aiDailyRequests: 20,
+      highlighted: false,
+    },
+    {
+      key: "growth",
+      price: { amount: 79, currency: "AUD" },
+      maxMembers: 15,
+      aiDailyRequests: 50,
+      highlighted: true,
+    },
+    {
+      key: "scale",
+      price: { amount: 199, currency: "AUD" },
+      maxMembers: null,
+      aiDailyRequests: 150,
+      highlighted: false,
+    },
   ],
 };
 

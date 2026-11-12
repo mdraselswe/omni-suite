@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { handleTenantWebhook } from "@/features/payments";
 import { db } from "@/server/db";
+import { latestRate } from "@/server/fx";
 
 /**
  * A business's Stripe account calls this when a client pays an invoice online.
@@ -15,6 +16,7 @@ export async function POST(request: NextRequest, { params }: RouteContext<"/api/
     tenantId,
     await request.text(),
     request.headers.get("stripe-signature"),
+    { rate: async (foreign, base) => (await latestRate(foreign, base))?.rate ?? null },
   );
   return NextResponse.json({ received: result.status === 200, note: result.note }, { status: result.status });
 }

@@ -12,7 +12,7 @@ import {
 import { buildTenantContext } from "@/server/tenancy/service";
 import type { Scope } from "@/server/rbac/resolve";
 import { getAuth, isPlatformAdmin } from "./auth";
-import { boundTenantOf } from "./handoff-access";
+import { boundTenantIdOf } from "./handoff-access";
 
 export type SessionUser = {
   id: string;
@@ -24,15 +24,17 @@ export type SessionUser = {
 
 /**
  * The signed-in user plus, for a session made by the custom-domain handoff, the
- * one business it is bound to. Deduplicated per request.
+ * id of the one business it is bound to (stored on the session row). Deduplicated per request.
  */
 export const getRequestSession = cache(
-  async (): Promise<{ user: SessionUser; boundTenant: string | null } | null> => {
+  async (): Promise<{ user: SessionUser; boundTenantId: string | null } | null> => {
     const result = await getAuth().api.getSession({ headers: await headers() });
     if (!result) return null;
     const { id, name, email, emailVerified, image } = result.user;
-    const boundTenant = await boundTenantOf(db(), result.session);
-    return { user: { id, name, email, emailVerified, image: image ?? null }, boundTenant };
+    return {
+      user: { id, name, email, emailVerified, image: image ?? null },
+      boundTenantId: boundTenantIdOf(result.session),
+    };
   },
 );
 
@@ -42,7 +44,7 @@ export const getRequestSession = cache(
  */
 export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
   const current = await getRequestSession();
-  return current && !current.boundTenant ? current.user : null;
+  return current && !current.boundTenantId ? current.user : null;
 });
 
 export async function requireUser(): Promise<SessionUser> {
@@ -61,13 +63,15 @@ export async function requirePlatformAdmin(): Promise<SessionUser> {
 export const requireTenant = cache(async (slug: string): Promise<TenantContext> => {
   const current = await getRequestSession();
   if (!current) redirect("/login");
-  if (current.boundTenant && current.boundTenant !== slug) notFound();
-  const platformAdmin = !current.boundTenant && isPlatformAdmin(current.user);
+  const platformAdmin = !current.boundTenantId && isPlatformAdmin(current.user);
   const result = await buildTenantContext(db(), slug, current.user.id, platformAdmin);
   if (!result.ok) {
-    if (result.reason === "suspended") redirect("/suspended");
+    // A bound session learns nothing about other businesses: always 404.
+    if (result.reason === "suspended" && !current.boundTenantId) redirect("/suspended");
     notFound();
   }
+  // A custom-domain session only ever opens the business it was made for.
+  if (current.boundTenantId && current.boundTenantId !== result.ctx.tenant.id) notFound();
   return withModuleGates(result.ctx);
 });
 

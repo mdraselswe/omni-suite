@@ -38,17 +38,24 @@ export function toDecimalString(minor: bigint, currency: string): string {
 }
 
 /**
- * Parses user input ("1,234.5", "1234", "-20.25") into minor units.
- * Returns null for anything that is not a plain number. Extra decimals round half up.
+ * Parses user input ("1,234.5", "1234", "-20.25", "-$20", "$-20", "(20)") into
+ * minor units. Returns null for anything that is not a plain number. Extra
+ * decimals round half up (away from zero).
  */
 export function parseMoney(input: string, currency: string): bigint | null {
-  const cleaned = input.replace(/[,\s]/g, "").replace(/^[^\d.-]+/, "");
-  if (!/^-?\d*(\.\d*)?$/.test(cleaned) || cleaned === "" || cleaned === "-" || cleaned === ".") {
-    return null;
-  }
+  let compact = input.replace(/[,\s]/g, "");
+  // Accounting style: (20.00) is −20.00.
+  const bracketed = /^\(.*\)$/.test(compact);
+  if (bracketed) compact = compact.slice(1, -1);
+  // A minus sign may come before or after a leading currency symbol or code ("-$20", "$-20", "AUD-20").
+  const prefix = /^[^\d.]*/.exec(compact)?.[0] ?? "";
+  const signs = prefix.replace(/[^-\u2212]/g, "").length;
+  if (signs > 1 || (signs === 1 && bracketed)) return null;
+  const cleaned = compact.slice(prefix.length);
+  if (!/^\d*(\.\d*)?$/.test(cleaned) || cleaned === "" || cleaned === ".") return null;
   const digits = minorDigits(currency);
-  const negative = cleaned.startsWith("-");
-  const [wholeRaw = "0", fracRaw = ""] = cleaned.replace("-", "").split(".");
+  const negative = bracketed || signs === 1;
+  const [wholeRaw = "0", fracRaw = ""] = cleaned.split(".");
   const whole = BigInt(wholeRaw === "" ? "0" : wholeRaw);
   const padded = (fracRaw + "0".repeat(digits + 1)).slice(0, digits + 1);
   const kept = digits === 0 ? 0n : BigInt(padded.slice(0, digits));
@@ -93,10 +100,29 @@ export function allocate(total: bigint, weights: readonly bigint[]): bigint[] {
   return negative ? parts.map((p) => -p) : parts;
 }
 
-/** Share of `part` in `whole` as basis points (2500 = 25.00%). */
+/** Share of `part` in `whole` as basis points (2500 = 25.00%), rounded to 0.01 bp half up. */
 export function shareBasisPoints(part: bigint, whole: bigint): number {
   if (whole === 0n) return 0;
-  return Number((part * 1_000_000n) / whole) / 100;
+  const n = part * 1_000_000n;
+  const negative = n < 0n !== whole < 0n;
+  const a = n < 0n ? -n : n;
+  const w = whole < 0n ? -whole : whole;
+  const rounded = (a * 2n + w) / (w * 2n);
+  return Number(negative ? -rounded : rounded) / 100;
+}
+
+/**
+ * `total × part / whole`, rounded half up: the share of `total` that belongs to
+ * `part` of `whole` (e.g. the GST inside a part payment). Zero when `whole` is 0.
+ */
+export function allocateShare(total: bigint, part: bigint, whole: bigint): bigint {
+  if (whole === 0n) return 0n;
+  const n = total * part;
+  const negative = n < 0n !== whole < 0n;
+  const a = n < 0n ? -n : n;
+  const w = whole < 0n ? -whole : whole;
+  const rounded = (a * 2n + w) / (w * 2n);
+  return negative ? -rounded : rounded;
 }
 
 /** Sum of bigints. */

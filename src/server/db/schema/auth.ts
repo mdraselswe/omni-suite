@@ -1,4 +1,4 @@
-import { boolean, index, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { boolean, index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 /**
  * Better Auth tables (identity only). Property names are what Better Auth
@@ -27,6 +27,13 @@ export const session = pgTable(
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
+    /**
+     * Set only on sessions made by the custom-domain handoff (ADR 0004): the one
+     * business (tenants.id) the session may open. Lives and dies with the session,
+     * so it can't be lost while the session is still valid. No foreign key: a
+     * deleted business leaves the session bound to nothing, which fails closed.
+     */
+    boundTenantId: uuid("bound_tenant_id"),
   },
   (t) => [index("session_user_idx").on(t.userId)],
 );

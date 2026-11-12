@@ -119,6 +119,8 @@ export const billingSchema = z.object({
         price: z.object({ amount: z.number().positive(), currency: z.string().length(3) }),
         /** Team members (internal) the plan allows; null = no limit. */
         maxMembers: z.number().int().positive().nullable(),
+        /** AI requests per day for a business on this plan (0 = AI off for the plan). */
+        aiDailyRequests: z.number().int().min(0),
         highlighted: z.boolean().default(false),
       }),
     )
@@ -126,3 +128,141 @@ export const billingSchema = z.object({
 });
 
 export type BillingConfig = z.infer<typeof billingSchema>;
+
+/** AI services the app can call. Each one's API key comes from env (src/config/env.ts). */
+export const AI_PROVIDERS = ["anthropic", "openai-compatible"] as const;
+export type AiProviderId = (typeof AI_PROVIDERS)[number];
+
+/** Features that call AI. Each can pick its own provider and model in src/config/ai.ts. */
+export const AI_FEATURES = ["proposalDraft", "insights"] as const;
+export type AiFeature = (typeof AI_FEATURES)[number];
+
+export const AI_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+
+const modelId = z.string().trim().min(1);
+
+export const aiSchema = z.object({
+  /** Provider every feature uses unless `features` says otherwise. */
+  defaultProvider: z.enum(AI_PROVIDERS),
+  providers: z.object({
+    /** Claude, through the official SDK. Key: ANTHROPIC_API_KEY. */
+    anthropic: z.object({
+      model: modelId,
+      /** Thinking depth and token spend. */
+      effort: z.enum(AI_EFFORTS),
+      /** Only for a gateway or proxy in front of the Claude API; leave out for the real API. */
+      baseUrl: z.url().optional(),
+    }),
+    /**
+     * Any server with an OpenAI-style `POST <baseUrl>/chat/completions`: OpenAI, OpenRouter,
+     * Groq, DeepSeek, Ollama, Gemini's OpenAI endpoint. Key: OPENAI_COMPATIBLE_API_KEY.
+     */
+    "openai-compatible": z.object({
+      model: modelId,
+      /** Base URL without a trailing slash and without /chat/completions. */
+      baseUrl: z.url(),
+      /**
+       * How to ask for JSON: "json_schema" (strict schema, OpenAI/OpenRouter/Groq/Ollama),
+       * "json_object" (any JSON, e.g. DeepSeek) or "none" (schema only in the instructions).
+       */
+      jsonMode: z.enum(["json_schema", "json_object", "none"]),
+      /** Name of the answer-length field: OpenAI's newer models want "max_completion_tokens". */
+      tokenLimitParam: z.enum(["max_tokens", "max_completion_tokens"]),
+    }),
+  }),
+  /** Per-feature override: a different provider and/or model (e.g. a cheaper, faster one). */
+  features: z.partialRecord(
+    z.enum(AI_FEATURES),
+    z.object({ provider: z.enum(AI_PROVIDERS).optional(), model: modelId.optional() }).strict(),
+  ),
+  /** Hard cap on one answer's length (tokens). */
+  maxTokens: z.number().int().positive(),
+  /** Give up on a request after this long (milliseconds). */
+  timeoutMs: z.number().int().positive(),
+  /**
+   * AI requests each business may make per day (its own timezone) when billing is off
+   * (self-hosted). With billing on, the plan's `aiDailyRequests` applies (src/config/billing.ts).
+   */
+  dailyRequestsPerBusiness: z.number().int().min(0),
+  /** AI requests one member may make per day, whatever the business allowance. */
+  dailyRequestsPerMember: z.number().int().min(0),
+  /** Longest brief a member can type for a proposal draft. */
+  briefMaxLength: z.number().int().positive(),
+});
+
+export type AiConfig = z.infer<typeof aiSchema>;
+
+/** Exchange-rate sources for "Use today's rate". "off" hides the button. */
+export const FX_PROVIDERS = ["open-er-api", "off"] as const;
+export type FxProviderKey = (typeof FX_PROVIDERS)[number];
+
+const currencyCode = z.string().regex(/^[A-Z]{3}$/, "Use a 3-letter ISO 4217 code, e.g. AUD");
+
+export const regionalSchema = z.object({
+  /** Number & date formats a business can pick in Settings (BCP 47 tags). */
+  locales: z.array(z.string().min(2)).min(1),
+  /**
+   * Best-guess currency for a time zone, used to prefill the new-business form.
+   * A key ending in "/" matches every zone in that region (e.g. "Australia/").
+   */
+  timeZoneCurrency: z.record(z.string().min(1), currencyCode),
+  fx: z.object({
+    /** Default source; FX_PROVIDER in the environment overrides it. */
+    provider: z.enum(FX_PROVIDERS),
+    /** API root of open.er-api.com (free, no key). Only currency codes are sent. */
+    openErApiUrl: z.url(),
+    /** Link shown next to the rate, as the provider's terms require. */
+    attributionUrl: z.url(),
+    /** Keep a fetched rate table this long (server memory). */
+    cacheHours: z.number().positive().max(48),
+    /** Give up on the provider after this long; the user types the rate instead. */
+    timeoutMs: z.number().int().positive(),
+  }),
+});
+
+export type RegionalConfig = z.infer<typeof regionalSchema>;
+
+export const listsSchema = z
+  .object({
+    /** Rows-per-page choices offered under every paginated list (ascending). */
+    pageSizes: z.array(z.number().int().min(5).max(500)).min(1),
+    /** Rows per page when the URL has no `size`. Must be one of `pageSizes`. */
+    defaultPageSize: z.number().int(),
+    /** Wait after the last keystroke before a search box updates the list (ms). */
+    searchDebounceMs: z.number().int().min(0).max(2000),
+    /** Longest search text used (longer input is cut). */
+    searchMaxLength: z.number().int().min(10).max(500),
+    /** Newest leads shown per column of the leads board; the list view shows them all, page by page. */
+    boardColumnSize: z.number().int().min(5).max(500),
+    /** Rows in the short lists on a detail page (e.g. a client's invoices) before "View all". */
+    previewSize: z.number().int().min(1).max(100),
+  })
+  .refine((l) => l.pageSizes.includes(l.defaultPageSize), {
+    message: "defaultPageSize must be one of pageSizes",
+    path: ["defaultPageSize"],
+  });
+
+export type ListsConfig = z.infer<typeof listsSchema>;
+
+/** Abuse limits: what one business (or one address) may do in a time window. */
+export const limitsSchema = z.object({
+  mail: z.object({
+    /** Emails one business may queue per hour (invitations, invoices, proposals, notifications). */
+    perBusinessPerHour: z.number().int().positive(),
+    /** Emails one business may queue per day (UTC). */
+    perBusinessPerDay: z.number().int().positive(),
+    /** Account emails (password reset, verification) one address may receive per hour. */
+    perRecipientPerHour: z.number().int().positive(),
+  }),
+  storage: z.object({
+    /** Total size of all uploaded files one business may keep, in megabytes. */
+    perBusinessMb: z.number().int().positive(),
+  }),
+  signIn: z.object({
+    /** Password sign-in attempts per email address per window (on top of Better Auth's per-IP limit). */
+    perEmailMax: z.number().int().positive(),
+    perEmailWindowMinutes: z.number().int().positive(),
+  }),
+});
+
+export type LimitsConfig = z.infer<typeof limitsSchema>;

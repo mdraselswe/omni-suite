@@ -85,6 +85,10 @@ export const invitations = pgTable(
     token: text("token").notNull().unique(),
     expiresAt: ts("expires_at").notNull(),
     acceptedAt: ts("accepted_at"),
+    /** Withdrawn by the business: kept (not deleted) so the link can say so. */
+    revokedAt: ts("revoked_at"),
+    /** When the invitation email last went out (null: only when created). */
+    lastSentAt: ts("last_sent_at"),
     invitedBy: text("invited_by").references(() => user.id, { onDelete: "set null" }),
     createdAt: createdAt(),
   },

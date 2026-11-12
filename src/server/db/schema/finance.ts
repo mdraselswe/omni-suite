@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   boolean,
   index,
   integer,
@@ -70,9 +71,21 @@ export const transactions = pgTable(
     description: text("description").notNull().default(""),
     /** In the account's currency. */
     amountMinor: money("amount_minor"),
+    /**
+     * Transfers between currencies: what arrived in the target account, in its
+     * currency (null when both accounts share a currency: the same amount).
+     */
+    toAmountMinor: bigint("to_amount_minor", { mode: "bigint" }),
     currency: text("currency").notNull(),
     /** Same amount in the tenant's base currency (rate on the date). */
     baseAmountMinor: money("base_amount_minor"),
+    /**
+     * GST/VAT inside `amountMinor` (income: collected for the tax office; expense:
+     * claimable). Profit counts amounts without it. Zero when there's no tax.
+     */
+    taxMinor: money("tax_minor"),
+    /** `taxMinor` in the base currency. */
+    baseTaxMinor: money("base_tax_minor"),
     fxRate: numeric("fx_rate", { precision: 18, scale: 8 }).notNull().default("1"),
     partnerId: uuid("partner_id"),
     clientId: uuid("client_id"),
@@ -140,6 +153,8 @@ export const capitalContributions = pgTable(
     amountMinor: money("amount_minor"),
     description: text("description").notNull().default(""),
     transactionId: uuid("transaction_id"),
+    /** Set when this money bought ownership units (an investment); it can't simply be reversed. */
+    ownershipEventId: uuid("ownership_event_id"),
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
     createdAt: createdAt(),
   },

@@ -44,21 +44,26 @@ export async function runAction(fn: () => Promise<string | void>): Promise<Actio
     return { ok: true, message: message ?? t("form.saved"), at: Date.now() };
   } catch (error) {
     unstable_rethrow(error);
-    if (error instanceof z.ZodError) {
-      const fieldErrors: Record<string, string[]> = {};
-      for (const issue of error.issues) {
-        const key = issue.path.join(".") || "_form";
-        (fieldErrors[key] ??= []).push(issue.message);
-      }
-      return { ok: false, message: t("form.fixErrors"), fieldErrors };
-    }
-    if (error instanceof FieldErrors)
-      return { ok: false, message: t("form.fixErrors"), fieldErrors: error.errors };
-    if (error instanceof ForbiddenError) return { ok: false, message: t("form.forbidden") };
-    if (error instanceof UserError) return { ok: false, message: error.message };
-    console.error(error);
-    return { ok: false, message: t("form.failed") };
+    return errorState(error);
   }
+}
+
+/** A known error as an ActionState (also used by route handlers that answer forms). Unknown errors are logged. */
+export function errorState(error: unknown): ActionState {
+  if (error instanceof z.ZodError) {
+    const fieldErrors: Record<string, string[]> = {};
+    for (const issue of error.issues) {
+      const key = issue.path.join(".") || "_form";
+      (fieldErrors[key] ??= []).push(issue.message);
+    }
+    return { ok: false, message: t("form.fixErrors"), fieldErrors };
+  }
+  if (error instanceof FieldErrors)
+    return { ok: false, message: t("form.fixErrors"), fieldErrors: error.errors };
+  if (error instanceof ForbiddenError) return { ok: false, message: t("form.forbidden") };
+  if (error instanceof UserError) return { ok: false, message: error.message };
+  console.error(error);
+  return { ok: false, message: t("form.failed") };
 }
 
 /** FormData → plain object (last value wins; checkboxes give "on"). */
@@ -90,12 +95,15 @@ export const fields = {
       .union([z.literal(""), z.uuid()])
       .optional()
       .transform((v) => (v === undefined || v === "" ? null : v)),
-  /** "1,250.50" → 125050n (minor units). `positive` rejects zero and negatives. */
-  money: (currency: string, opts: { positive?: boolean; optional?: boolean } = {}) =>
+  /**
+   * "1,250.50" → 125050n (minor units). Negatives are rejected unless `allowNegative`
+   * (an overdrawn opening balance); `positive` also rejects zero.
+   */
+  money: (currency: string, opts: { positive?: boolean; optional?: boolean; allowNegative?: boolean } = {}) =>
     z.string().transform((value, c) => {
       if (opts.optional && value.trim() === "") return 0n;
       const parsed = parseMoney(value, currency);
-      if (parsed === null || (opts.positive && parsed <= 0n) || parsed < 0n) {
+      if (parsed === null || (opts.positive && parsed <= 0n) || (parsed < 0n && !opts.allowNegative)) {
         c.addIssue({ code: "custom", message: t("form.amount") });
         return z.NEVER;
       }

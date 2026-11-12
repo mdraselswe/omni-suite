@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   allocate,
+  allocateShare,
   applyBasisPoints,
   formatMoney,
   parseMoney,
@@ -55,5 +56,30 @@ describe("parsePercentBp", () => {
     expect(parsePercentBp("100.01")).toBeNull();
     expect(parsePercentBp("abc")).toBeNull();
     expect(parsePercentBp("0.05")).toBe(5);
+  });
+});
+
+describe("signs, shares and rounding", () => {
+  it("reads a minus before or after a currency symbol, and accounting brackets", () => {
+    expect(parseMoney("-$20", "AUD")).toBe(-2000n);
+    expect(parseMoney("$-20.50", "AUD")).toBe(-2050n);
+    expect(parseMoney("(20)", "AUD")).toBe(-2000n);
+    expect(parseMoney("--20", "AUD")).toBeNull();
+    expect(parseMoney("(-20)", "AUD")).toBeNull();
+    expect(parseMoney("$1,234.56", "AUD")).toBe(123456n);
+  });
+
+  it("allocates a share of a total, rounded half up", () => {
+    // GST inside a third of a $110 invoice: 10 × 33.33 / 110.
+    expect(allocateShare(1000n, 3333n, 11000n)).toBe(303n);
+    expect(allocateShare(1000n, 11000n, 11000n)).toBe(1000n);
+    expect(allocateShare(1000n, 0n, 11000n)).toBe(0n);
+    expect(allocateShare(1000n, 5n, 0n)).toBe(0n);
+  });
+
+  it("rounds ownership percentages instead of cutting them", () => {
+    // 2 of 3 units = 66.6667% → 6666.67 bp, not 6666.66.
+    expect(shareBasisPoints(2n, 3n)).toBe(6666.67);
+    expect(shareBasisPoints(1n, 3n)).toBe(3333.33);
   });
 });

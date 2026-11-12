@@ -25,6 +25,19 @@ export const tenantSettingsSchema = z.object({
   proposalPrefix: z.string().max(10).default("PRO-"),
   paymentTermsDays: z.number().int().min(0).max(365).default(14),
   invoiceFooter: z.string().max(2000).default(""),
+  /** Replies to emails sent for the business go here (blank: the platform's address, no replies). */
+  replyToEmail: z.email().or(z.literal("")).catch("").default(""),
+  /**
+   * Payment reminders for sent invoices: `daysBefore` the due date (0 = none),
+   * then on each of `daysAfter` days past it.
+   */
+  reminders: z
+    .object({
+      enabled: z.boolean().default(true),
+      daysBefore: z.number().int().min(0).max(60).default(3),
+      daysAfter: z.array(z.number().int().min(1).max(365)).max(6).default([1, 7, 14]),
+    })
+    .prefault({}),
   pipelineStages: z
     .array(
       z.object({ key: z.string().min(1), label: z.string().min(1), kind: z.enum(["open", "won", "lost"]) }),
