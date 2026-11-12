@@ -148,6 +148,25 @@ export const MODULES: readonly ModuleDef[] = [
     ],
   },
   {
+    key: "bills",
+    label: "module.bills",
+    optional: false,
+    permissions: [
+      internal("bills.read", "perm.bills.read", { ...owners, accountant: "all" }),
+      internal("bills.write", "perm.bills.write", { ...owners }),
+    ],
+    nav: [
+      {
+        path: "bills",
+        group: "money",
+        label: "nav.bills",
+        icon: "receipt",
+        permission: "bills.read",
+        area: "team",
+      },
+    ],
+  },
+  {
     key: "partners",
     label: "module.partners",
     optional: false,

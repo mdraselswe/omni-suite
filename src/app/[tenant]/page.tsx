@@ -2,6 +2,7 @@ import {
   AlertCircle,
   ChartPie,
   FolderKanban,
+  HandCoins,
   Hourglass,
   ListTodo,
   Sparkles,
@@ -23,6 +24,7 @@ import { EmptyState, PageHeader, Panel, StatCard } from "@/components/layout/pag
 import { ButtonLink } from "@/components/ui/button-link";
 import { Progress } from "@/components/ui/progress";
 import { BusinessInsights, canUseAi } from "@/features/ai";
+import { payables } from "@/features/bills";
 import { pipelineSummary } from "@/features/crm";
 import { cashPosition, monthlyTotals, profitAndLoss, runway as runwayOf } from "@/features/finance";
 import { invoiceBalance, listInvoices, monthlyRecurring, receivables } from "@/features/invoices";
@@ -67,6 +69,7 @@ export default async function DashboardPage({ params, searchParams }: PageProps<
   const canDash = hasPermission(ctx, "dashboard.read");
   const canFinance = canDash && hasPermission(ctx, "finance.read");
   const canInvoices = canDash && hasPermission(ctx, "invoices.read");
+  const canBills = canDash && hasPermission(ctx, "bills.read");
   const canPipeline = canDash && isModuleEnabled(ctx, "crm") && hasPermission(ctx, "leads.read");
   const projectScope = isModuleEnabled(ctx, "projects") ? ctx.permissions.get("projects.read") : undefined;
   const hasTasks = isModuleEnabled(ctx, "projects");
@@ -75,8 +78,8 @@ export default async function DashboardPage({ params, searchParams }: PageProps<
   const runwayFrom = monthStart(addMonths(now, -3));
   const runwayTo = addDays(monthStart(now), -1);
 
-  const [cashNow, month, fy, trend, spend, owed, mrr, overdue, pipeline, tasks, projects] = await Promise.all(
-    [
+  const [cashNow, month, fy, trend, spend, owed, mrr, overdue, pipeline, tasks, projects, billsOwed] =
+    await Promise.all([
       when(canFinance, () =>
         cashPosition(
           database,
@@ -104,8 +107,8 @@ export default async function DashboardPage({ params, searchParams }: PageProps<
       when(canPipeline, () => pipelineSummary(database, ctx, now)),
       when(hasTasks, () => myDueTasks(database, ctx, addDays(now, 7))),
       when(canDash && projectScope !== undefined, () => listProjects(database, ctx, projectScope ?? "own")),
-    ],
-  );
+      when(canBills, () => payables(database, ctx.tenant.id, now, ctx.tenant.settings.currency)),
+    ]);
 
   const firstName = ctx.user.name.split(/\s+/)[0] ?? ctx.user.name;
 
@@ -362,6 +365,27 @@ export default async function DashboardPage({ params, searchParams }: PageProps<
         ) : null}
         {canInvoices ? (
           <StatCard icon={Repeat} label={t("dash.mrr")} value={f.money(mrr ?? 0n)} hint={t("dash.mrrHint")} />
+        ) : null}
+        {billsOwed ? (
+          <StatCard
+            icon={HandCoins}
+            label={t("bills.toPay")}
+            value={f.money(billsOwed.base.owedMinor)}
+            tone={billsOwed.base.overdueMinor > 0n ? "negative" : "default"}
+            hint={[
+              t("bills.dashHint", { overdue: f.money(billsOwed.base.overdueMinor) }),
+              billsOwed.byCurrency.some((p) => p.currency !== f.currency)
+                ? t("bills.dashHintOthers", {
+                    amounts: billsOwed.byCurrency
+                      .filter((p) => p.currency !== f.currency)
+                      .map((p) => f.money(p.owedMinor, p.currency))
+                      .join(", "),
+                  })
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          />
         ) : null}
         {projects ? (
           <StatCard
