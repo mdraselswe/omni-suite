@@ -756,6 +756,14 @@ XERO_CLIENT_SECRET=<client secret>
 7. যে business AI চায় না, সে **Settings → Modules**-এ "AI assistant" বন্ধ করতে পারে। ব্যবহারের অনুমতি (`ai.use`) owner, admin আর manager-এর আছে, Team → Roles-এ বদলানো যায়।
 8. গোপনীয়তা: insights-এ শুধু মোট সংখ্যা যায়, কোনো ক্লায়েন্টের নাম না। Proposal draft-এ আপনার লেখা brief আর ক্লায়েন্টের নাম যে provider ব্যবহার হচ্ছে সেখানে যায়। যে ফ্রি প্ল্যানে ট্রেনিং হতে পারে (Gemini, Mistral, OpenRouter ফ্রি), সেটা শুধু demo ডেটা দিয়ে পরীক্ষার জন্য। আসল ক্লায়েন্টের কাজে paid প্ল্যান ব্যবহার করুন।
 
+**ক্লায়েন্ট portal assistant:** ক্লায়েন্টরা portal-এর **Assistant** পেজে নিজের invoice (কত বাকি, কবে due), proposal আর project-এর অবস্থা জিজ্ঞেস করতে পারে। উত্তর আসে শুধু ওই ক্লায়েন্টের নিজের তথ্য থেকে, অন্য ক্লায়েন্টের কিছু AI-এর কাছে যায়ই না। AI উত্তর দিতে না পারলে, অথবা ক্লায়েন্ট দাম কমানো, refund, deadline বদল বা অভিযোগ জানালে **Send my question to the team** বোতাম আসে। চাপলে যাদের `clients.write` অনুমতি আছে তারা notification আর ইমেইল পায়।
+
+- **কে পাবে:** owner বা admin **Settings → AI assistant**-এ ঠিক করেন: **Off** (ডিফল্ট), **All clients** (নতুন ক্লায়েন্টসহ সবাই), অথবা **Only the clients ticked below** (তালিকা থেকে টিক দিয়ে নির্দিষ্ট ক্লায়েন্ট)।
+- **ক্লায়েন্টের ভেতরে কোন user:** **Team → Roles**-এ "Ask the AI assistant in the portal" অনুমতি দিয়ে। ডিফল্টে client owner আর client member দুজনেই পায়। যে user invoice দেখার অনুমতি রাখে না, AI-ও তাকে invoice-এর তথ্য বলে না।
+- **সীমা:** প্রতি ক্লায়েন্ট দিনে ৩০টা প্রশ্ন আর ৫বার team-কে পাঠানো। এগুলো business-এর দৈনিক AI সীমার ভেতরেই গোনা হয়। বদলানো যায় `src/config/ai.ts`-এর `portalAssistant`-এ।
+- কথোপকথন শুধু ব্রাউজারে থাকে। সার্ভারে প্রশ্ন বা উত্তর রাখা হয় না, শুধু সংখ্যা গোনা হয়।
+- ফ্রি tier-এ ট্রেনিং হতে পারে এমন provider থাকলে settings পেজ সতর্ক করে। আসল ক্লায়েন্টের জন্য চালু করার আগে paid key দিন।
+
 জেনে রাখুন: Claude Max, ChatGPT Plus বা Gemini Advanced-এর মতো chat subscription দিয়ে API চলে না। অ্যাপের জন্য প্রতিটা provider-এর developer console থেকে আলাদা API key লাগে। বিস্তারিত: `docs/configuration.md` → AI providers।
 
 অফিসিয়াল লিংক: [Stripe Checkout](https://docs.stripe.com/payments/checkout) · [Stripe webhooks](https://docs.stripe.com/webhooks) · [Stripe customer portal](https://docs.stripe.com/customer-management) · [Xero OAuth 2.0](https://developer.xero.com/documentation/guides/oauth2/overview) · [Xero scopes](https://developer.xero.com/documentation/guides/oauth2/scopes) · [Claude API](https://docs.claude.com/)

@@ -84,6 +84,12 @@ describe("seed", () => {
     const owed = await payables(database, tenantId, day, "AUD");
     expect(owed.base).toMatchObject({ owedMinor: 187_000n, overdueMinor: 77_000n, count: 2 });
 
+    // Portal assistant: on for the cafe only.
+    const [reread] = await database.select().from(tenants).where(eq(tenants.id, tenantId));
+    const assistant = parseTenantSettings(reread?.settings).portalAssistant;
+    expect(assistant.mode).toBe("selected");
+    expect(assistant.clientIds).toHaveLength(1);
+
     expect(await database.select().from(partners).where(eq(partners.tenantId, tenantId))).toHaveLength(2);
     const rules = await database.select().from(profitRules).where(eq(profitRules.tenantId, tenantId));
     expect(rules.map((r) => r.status)).toEqual(["active"]);

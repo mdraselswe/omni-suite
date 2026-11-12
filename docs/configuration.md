@@ -82,6 +82,7 @@ Everything except Claude uses one Chat Completions adapter (`src/server/ai/opena
 - **JSON answers:** if a service rejects strict JSON schemas, set its `jsonMode` to `"json_object"` (DeepSeek needs this) or `"none"`; if it rejects `max_completion_tokens`, set `tokenLimitParam` to `"max_tokens"`.
 - **Privacy:** proposal drafts send the brief and the client's name to the provider. Free tiers that may train on prompts (Gemini free, Mistral Experiment, OpenRouter free models) are for testing with demo data only; use a paid tier for real clients.
 - A feature is hidden (and its action refuses) until it has a provider with a key (its own or a fallback).
+- **Client portal assistant** (`portalAssistant` feature): each business picks who gets it in Settings → AI assistant (stored in tenant settings as `portalAssistant: { mode: "off" | "all" | "selected", clientIds }`, off by default); the `portal.assistant` permission decides which portal roles may use it. It only reads the asking client's own invoices, proposals and projects (and only those the person may open), keeps the conversation in the browser, and lets the client send a question to everyone with `clients.write`. Limits per client live in `src/config/ai.ts` → `portalAssistant` and count toward the business's daily AI allowance.
 
 **Adding another OpenAI-style provider:** add its id to `AI_PROVIDERS` (`src/config/schema.ts`), its settings in `src/config/ai.ts`, its key in `src/config/env.ts`, `.env.example` and `API_KEYS` (`src/server/ai/registry.ts`). No new code is needed.
 

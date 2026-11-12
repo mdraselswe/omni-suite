@@ -77,8 +77,9 @@ pnpm dev
 12. **Bills**: Money → Bills-এ নতুন বিল (সাপ্লায়ার, GST, ক্যাটাগরি, PDF সংযুক্তি)। Pay দিলে ledger-এ খরচ হয়, আর ড্যাশবোর্ডে "Bills to pay" কমে। Undo payment দিলে বিল আবার খোলা হয়।
 13. **শেয়ার লিংক**: একটা ইনভয়েস বা প্রপোজালের পেজে Share link কপি করুন। তারপর অন্য ব্রাউজার বা private window-এ খুলুন: লগইন ছাড়াই দেখা যায়, প্রিন্ট করা যায়, আর প্রপোজাল accept বা decline করা যায়। **Reset link** দিলে পুরনো লিংক আর কাজ করে না।
 14. **CSV import**: Leads-এ আর Money-তে **Import** বোতাম। প্রথমে ফাইল চেক হয় (preview, ভুল লাইন আর ডুপ্লিকেট দেখায়), তারপর ইমপোর্ট। নমুনা ফাইল ডায়ালগেই ডাউনলোড করা যায়।
-15. **Activity log**: উপরের সব পরিবর্তন সেখানে দেখা যাবে।
-16. **Platform admin** (`/admin`): `.env.local`-এর `PLATFORM_ADMIN_EMAILS`-এর ইমেইল দিয়ে Google-এ ঢুকলে দেখা যাবে (Google সেটআপের পরে)।
+15. **ক্লায়েন্ট portal assistant** (AI key লাগবে): client@demo.test দিয়ে ঢুকে মেনুতে **Assistant**, তারপর "What do I owe right now?" জিজ্ঞেস করুন। উত্তর শুধু Harbour Cafe-এর নিজের invoice, proposal আর project থেকে আসে। দাম কমানো বা deadline বদলের মতো অনুরোধ করলে **Send my question to the team** দেখায়, পাঠালে owner-এর notification আর Mailpit-এ ইমেইল যায়। Owner দিয়ে **Settings → AI assistant**-এ Off / All clients / শুধু টিক দেওয়া ক্লায়েন্ট বেছে নিন। demo-তে শুধু Harbour Cafe চালু আছে।
+16. **Activity log**: উপরের সব পরিবর্তন সেখানে দেখা যাবে।
+17. **Platform admin** (`/admin`): `.env.local`-এর `PLATFORM_ADMIN_EMAILS`-এর ইমেইল দিয়ে Google-এ ঢুকলে দেখা যাবে (Google সেটআপের পরে)।
 
 ## ৫. Google সেটআপের পরে যা টেস্ট করবেন
 

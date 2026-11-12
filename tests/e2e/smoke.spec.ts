@@ -73,6 +73,7 @@ test.describe("owner", () => {
     "/demo/settings/modules/",
     "/demo/settings/fields/",
     "/demo/settings/pipeline/",
+    "/demo/settings/ai/",
     "/demo/settings/backup/",
     "/demo/settings/domains/",
     "/demo/settings/payments/",
@@ -200,6 +201,8 @@ test.describe("client", () => {
     "/demo/portal/proposals/",
     "/demo/portal/files/",
     "/demo/portal/onboarding/",
+    // The chat when this server has an AI key, a "not available" note when it doesn't.
+    "/demo/portal/assistant/",
   ]) {
     test(`${path} renders with no accessibility violations`, async ({ page }) => {
       const res = await page.goto(path);

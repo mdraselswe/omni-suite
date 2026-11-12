@@ -45,6 +45,7 @@ import { shareLinkFor } from "@/features/sharing";
 import { addDays, addMonths, monthEnd, monthStart, today as todayIn } from "@/lib/dates";
 import { uuidv7 } from "@/lib/ids";
 import type { LineItem } from "@/lib/line-items";
+import { parseTenantSettings } from "@/lib/tenant-settings";
 import type { Database, DbOrTx } from "@/server/db";
 import {
   account,
@@ -144,6 +145,34 @@ async function tenantExists(database: Database, slug: string): Promise<boolean> 
  * bills. Also added (once) to a demo business that an older seed made, so
  * `pnpm db:seed` shows the new features without wiping anything.
  */
+/**
+ * The client portal assistant, on for the cafe only ("selected"), so the demo shows both a client
+ * with it and one without. On an existing demo only when the setting was never saved, so
+ * switching it off sticks.
+ */
+async function addAssistantSample(database: Database, fresh = false): Promise<boolean> {
+  const [demo] = await database
+    .select({ id: tenants.id, settings: tenants.settings })
+    .from(tenants)
+    .where(eq(tenants.slug, DEMO_SLUG));
+  const stored = demo?.settings;
+  if (!demo) return false;
+  // A new tenant already stores the default ("off"); an older one has no such key yet.
+  if (!fresh && typeof stored === "object" && stored !== null && "portalAssistant" in stored) return false;
+  const [cafe] = await database
+    .select({ id: clients.id })
+    .from(clients)
+    .where(and(eq(clients.tenantId, demo.id), eq(clients.name, "Harbour Cafe")));
+  if (!cafe) return false;
+  const settings = parseTenantSettings(stored);
+  await database
+    .update(tenants)
+    .set({ settings: { ...settings, portalAssistant: { mode: "selected", clientIds: [cafe.id] } } })
+    .where(eq(tenants.id, demo.id));
+  await bumpPermissionsVersion(database, demo.id);
+  return true;
+}
+
 async function addLaterSamples(database: Database, today: string): Promise<boolean> {
   const [demo] = await database.select({ id: tenants.id }).from(tenants).where(eq(tenants.slug, DEMO_SLUG));
   if (!demo) return false;
@@ -271,7 +300,8 @@ export async function seed(
   }
 
   if (demoExists) {
-    if (await addLaterSamples(database, today)) result.demo = "updated";
+    const later = await addLaterSamples(database, today);
+    if ((await addAssistantSample(database)) || later) result.demo = "updated";
     return result;
   }
   result.demo = "created";
@@ -997,6 +1027,7 @@ export async function seed(
   await closePeriod(database, owner, { startDate: start, endDate: monthEnd(addMonths(today, -4)) });
 
   await addLaterSamples(database, today);
+  await addAssistantSample(database, true);
 
   return result;
 }
