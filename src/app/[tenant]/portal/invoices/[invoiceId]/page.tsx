@@ -44,7 +44,11 @@ export default async function PortalInvoice({
     balance > 0n &&
     (await canPayOnline(db(), ctx.tenant.id, invoice.currency));
   const methodLabel = (method: string) =>
-    method === "stripe" ? t("payments.method.stripe") : method.trim() || t("portalWork.methodUnknown");
+    method === "stripe"
+      ? t("payments.method.stripe")
+      : method === "refund"
+        ? t("credit.refundMethod")
+        : method.trim() || t("portalWork.methodUnknown");
 
   return (
     <div className="grid gap-6">
@@ -145,6 +149,12 @@ export default async function PortalInvoice({
             <>
               <dt>{t("invoices.writtenOff")}</dt>
               <dd className="text-right tabular-nums">{money(invoice.writtenOffMinor)}</dd>
+            </>
+          ) : null}
+          {invoice.creditedMinor > 0n ? (
+            <>
+              <dt>{t("credit.credited")}</dt>
+              <dd className="text-right tabular-nums">{money(invoice.creditedMinor)}</dd>
             </>
           ) : null}
           <dt className="font-semibold">{t("invoices.balance")}</dt>

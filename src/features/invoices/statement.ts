@@ -2,7 +2,7 @@ import "server-only";
 import { and, asc, desc, eq, inArray, isNull, lte, notInArray, sql } from "drizzle-orm";
 import { addDays, daysBetween } from "@/lib/dates";
 import type { DbOrTx } from "@/server/db";
-import { clients, invoicePayments, invoices } from "@/server/db/schema";
+import { clients, invoiceAdjustments, invoicePayments, invoices } from "@/server/db/schema";
 
 /** How late an unpaid balance is, in the usual 30-day steps. */
 export const AGE_BUCKETS = ["current", "d1_30", "d31_60", "d61_90", "d90"] as const;
@@ -33,7 +33,7 @@ export type AgedRow = {
  * The bucket edges match `ageBucket`: due today is current, 30 days late is 1–30.
  */
 export async function agedReceivables(database: DbOrTx, tenantId: string, today: string): Promise<AgedRow[]> {
-  const owed = sql`(${invoices.totalMinor} - ${invoices.paidMinor} - ${invoices.writtenOffMinor})`;
+  const owed = sql`(${invoices.totalMinor} - ${invoices.paidMinor} - ${invoices.writtenOffMinor} - ${invoices.creditedMinor})`;
   /** Sum of what's owed on invoices due on or after `from` and before `to`. */
   const dueIn = (from: string | null, to: string | null) => {
     const after = from === null ? sql`true` : sql`${invoices.dueDate} >= ${from}`;
@@ -94,10 +94,13 @@ export function agedTotals(rows: readonly AgedRow[]): Map<string, AgeAmounts & {
 
 export type StatementEntry = {
   date: string;
-  kind: "invoice" | "payment" | "writeOff";
+  kind: "invoice" | "payment" | "refund" | "creditNote" | "writeOff";
   invoiceId: string;
+  /** The invoice's number. */
   number: string;
-  /** Positive raises what the client owes; payments and write-offs are negative. */
+  /** A credit note's own number (credit notes and their refunds). */
+  reference: string | null;
+  /** Positive raises what the client owes; payments, credits and write-offs are negative. */
   amountMinor: bigint;
   balanceMinor: bigint;
 };
@@ -106,18 +109,22 @@ export type Statement = {
   currency: string;
   openingMinor: bigint;
   invoicedMinor: bigint;
+  /** Received, less anything refunded. */
   paidMinor: bigint;
+  /** Credit notes and write-offs: no longer owed, without money coming in. */
+  creditedMinor: bigint;
   closingMinor: bigint;
   entries: StatementEntry[];
 };
 
-const KIND_ORDER = { invoice: 0, payment: 1, writeOff: 2 } as const;
+const KIND_ORDER = { invoice: 0, creditNote: 1, refund: 2, payment: 3, writeOff: 4 } as const;
 
 /**
  * A client's account for a date range, one statement per currency: what they
- * owed at the start, each invoice, payment and write-off in the range with the
- * running balance, and what they owe at the end. Drafts and void invoices never
- * count; a reversed payment counts as never received.
+ * owed at the start, each invoice, payment, credit note, refund and write-off in
+ * the range (each on its own day) with the running balance, and what they owe at
+ * the end. Drafts and void invoices never count; a reversed payment and a voided
+ * credit note count as never made.
  */
 export async function clientStatement(
   database: DbOrTx,
@@ -131,7 +138,7 @@ export async function clientStatement(
     eq(invoices.clientId, clientId),
     notInArray(invoices.status, ["draft", "void"]),
   );
-  const [issued, paid] = await Promise.all([
+  const [issued, paid, adjusted] = await Promise.all([
     database
       .select({
         id: invoices.id,
@@ -139,13 +146,12 @@ export async function clientStatement(
         currency: invoices.currency,
         issueDate: invoices.issueDate,
         totalMinor: invoices.totalMinor,
-        writtenOffMinor: invoices.writtenOffMinor,
-        writtenOffDate: invoices.writtenOffDate,
       })
       .from(invoices)
       .where(and(live, lte(invoices.issueDate, range.to))),
     database
       .select({
+        id: invoicePayments.id,
         invoiceId: invoices.id,
         number: invoices.number,
         currency: invoices.currency,
@@ -162,37 +168,64 @@ export async function clientStatement(
           lte(invoicePayments.date, range.to),
         ),
       ),
+    database
+      .select({
+        invoiceId: invoices.id,
+        number: invoices.number,
+        currency: invoices.currency,
+        kind: invoiceAdjustments.kind,
+        reference: invoiceAdjustments.number,
+        date: invoiceAdjustments.date,
+        amountMinor: invoiceAdjustments.amountMinor,
+        refundPaymentId: invoiceAdjustments.refundPaymentId,
+      })
+      .from(invoiceAdjustments)
+      .innerJoin(invoices, eq(invoices.id, invoiceAdjustments.invoiceId))
+      .where(
+        and(
+          live,
+          eq(invoiceAdjustments.tenantId, tenantId),
+          isNull(invoiceAdjustments.voidedAt),
+          lte(invoiceAdjustments.date, range.to),
+        ),
+      ),
   ]);
 
   type Row = Omit<StatementEntry, "balanceMinor"> & { currency: string };
   const all: Row[] = [];
+  const refundOf = new Map(
+    adjusted.filter((a) => a.refundPaymentId).map((a) => [a.refundPaymentId, a.reference] as const),
+  );
   for (const inv of issued) {
     all.push({
       date: inv.issueDate,
       kind: "invoice",
       invoiceId: inv.id,
       number: inv.number,
+      reference: null,
       amountMinor: inv.totalMinor,
       currency: inv.currency,
     });
-    const writeOffDate = inv.writtenOffDate ?? inv.issueDate;
-    if (inv.writtenOffMinor > 0n && writeOffDate <= range.to) {
-      all.push({
-        date: writeOffDate,
-        kind: "writeOff",
-        invoiceId: inv.id,
-        number: inv.number,
-        amountMinor: -inv.writtenOffMinor,
-        currency: inv.currency,
-      });
-    }
+  }
+  for (const a of adjusted) {
+    all.push({
+      date: a.date,
+      kind: a.kind === "credit_note" ? "creditNote" : "writeOff",
+      invoiceId: a.invoiceId,
+      number: a.number,
+      reference: a.reference,
+      amountMinor: -a.amountMinor,
+      currency: a.currency,
+    });
   }
   for (const p of paid) {
+    // A refund is a negative payment: it raises the balance back by what was paid out.
     all.push({
       date: p.date,
-      kind: "payment",
+      kind: p.amountMinor < 0n ? "refund" : "payment",
       invoiceId: p.invoiceId,
       number: p.number,
+      reference: refundOf.get(p.id) ?? null,
       amountMinor: -p.amountMinor,
       currency: p.currency,
     });
@@ -206,6 +239,7 @@ export async function clientStatement(
       openingMinor: 0n,
       invoicedMinor: 0n,
       paidMinor: 0n,
+      creditedMinor: 0n,
       closingMinor: 0n,
       entries: [],
     };
@@ -216,7 +250,8 @@ export async function clientStatement(
       continue;
     }
     if (entry.kind === "invoice") st.invoicedMinor += entry.amountMinor;
-    if (entry.kind === "payment") st.paidMinor -= entry.amountMinor;
+    if (entry.kind === "payment" || entry.kind === "refund") st.paidMinor -= entry.amountMinor;
+    if (entry.kind === "creditNote" || entry.kind === "writeOff") st.creditedMinor -= entry.amountMinor;
     st.entries.push({ ...entry, balanceMinor: st.closingMinor });
   }
   return [...byCurrency.values()]

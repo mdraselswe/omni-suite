@@ -361,7 +361,8 @@ export async function syncXero(database: Database, tenantId: string): Promise<Sy
     }
     const pendingPayments: { paymentId: string; payload: XeroPayment }[] = [];
     for (const p of payments) {
-      if (p.reversedAt || paymentLinks.has(p.id)) continue;
+      // Refunds from credit notes aren't Xero payments (Xero keeps credit notes apart): not sent.
+      if (p.reversedAt || p.amountMinor <= 0n || paymentLinks.has(p.id)) continue;
       const xeroInvoiceId = invoiceLinks.get(p.invoiceId)?.xeroId;
       const currency = currencyOf.get(p.invoiceId);
       if (!xeroInvoiceId || !currency) continue;

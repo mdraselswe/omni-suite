@@ -23,6 +23,7 @@ export const tenantSettingsSchema = z.object({
   fiscalYearStartMonth: z.number().int().min(1).max(12).default(7),
   invoicePrefix: z.string().max(10).default("INV-"),
   proposalPrefix: z.string().max(10).default("PRO-"),
+  creditNotePrefix: z.string().max(10).default("CN-"),
   paymentTermsDays: z.number().int().min(0).max(365).default(14),
   invoiceFooter: z.string().max(2000).default(""),
   /** Replies to emails sent for the business go here (blank: the platform's address, no replies). */

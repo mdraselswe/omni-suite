@@ -4,11 +4,14 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { t } from "@/i18n";
 import { addDays, today } from "@/lib/dates";
-import { customValues, fields, formObject, runAction, type ActionState } from "@/server/action";
+import { customValues, fields, formObject, runAction, UserError, type ActionState } from "@/server/action";
 import { actionContext } from "@/server/auth/session";
 import { db } from "@/server/db";
 import { parseItemsField } from "@/server/form-items";
 import { customFieldsFor } from "@/server/shared";
+import { hasPermission } from "@/server/tenancy/context";
+import { formatMoney } from "@/lib/money";
+import { issueCreditNote, voidCreditNote } from "./credit-notes";
 import {
   createInvoice,
   createRecurring,
@@ -221,6 +224,64 @@ export async function resendInvoiceAction(
           ? "invoices.sentEmail"
           : "invoices.sentNobody",
     );
+  });
+}
+
+const fxRateField = z
+  .string()
+  .regex(/^\d+(\.\d{1,8})?$/)
+  .or(z.literal(""))
+  .optional();
+
+/** Credit note: invoices.write; one that refunds money also needs payments.record. */
+export async function issueCreditNoteAction(
+  slug: string,
+  _p: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  return runAction(async () => {
+    const { ctx } = await actionContext(slug, "invoices.write");
+    const raw = formObject(formData);
+    const currency =
+      (await invoiceCurrency(db(), ctx.tenant.id, raw.id ?? "")) ?? ctx.tenant.settings.currency;
+    const input = z
+      .object({
+        id: fields.id(),
+        amount: fields.money(currency, { positive: true }),
+        date: fields.date(),
+        reason: fields.required(500),
+        refundAccountId: fields.optionalId(),
+        fxRate: fxRateField,
+      })
+      .parse(raw);
+    if (input.refundAccountId && !hasPermission(ctx, "payments.record")) {
+      throw new UserError(t("credit.refundAccount"));
+    }
+    const note = await issueCreditNote(db(), ctx, input.id, {
+      amountMinor: input.amount,
+      date: input.date,
+      reason: input.reason,
+      refundAccountId: input.refundAccountId,
+      fxRate: input.fxRate || undefined,
+    });
+    return note.refundedMinor > 0n
+      ? t("credit.issuedRefund", {
+          number: note.number,
+          refund: formatMoney(note.refundedMinor, currency, ctx.tenant.settings.locale),
+        })
+      : t("credit.issued", { number: note.number });
+  });
+}
+
+export async function voidCreditNoteAction(
+  slug: string,
+  _p: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  return runAction(async () => {
+    const { ctx } = await actionContext(slug, "invoices.write");
+    await voidCreditNote(db(), ctx, fields.id().parse(formObject(formData).id));
+    return t("credit.voided");
   });
 }
 

@@ -4,6 +4,7 @@ import { formatters } from "@/components/data/format";
 import { ActionButton } from "@/components/form/action-button";
 import { TextField } from "@/components/form/field";
 import { FormDialog } from "@/components/form/form-dialog";
+import { Section } from "@/components/layout/page";
 import { ButtonLink } from "@/components/ui/button-link";
 import { canUseAi } from "@/features/ai";
 import { DocumentLines, PrintButton } from "@/features/invoices";
@@ -22,6 +23,7 @@ import {
   sendProposalAction,
   updateProposalAction,
 } from "@/features/proposals";
+import { ShareLinkPanel } from "@/features/sharing";
 import { t } from "@/i18n";
 import { addDays, formatDateTime, today } from "@/lib/dates";
 import { tenantHref } from "@/lib/href";
@@ -267,6 +269,12 @@ export default async function ProposalPage({ params }: PageProps<"/[tenant]/prop
           </section>
         ) : null}
       </article>
+
+      {p.status !== "draft" ? (
+        <Section title={t("share.title")}>
+          <ShareLinkPanel slug={tenant} kind="proposal" id={p.id} token={p.shareToken} canWrite={canWrite} />
+        </Section>
+      ) : null}
     </div>
   );
 }

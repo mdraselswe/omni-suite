@@ -174,7 +174,7 @@ async function secretsFor(database: DbOrTx, tenantId: string) {
  */
 export async function startInvoiceCheckout(
   database: DbOrTx,
-  ctx: TenantContext,
+  ctx: Pick<TenantContext, "tenant">,
   input: { invoiceId: string; clientId: string; returnUrl: string },
 ): Promise<string> {
   const conn = await secretsFor(database, ctx.tenant.id);

@@ -61,7 +61,7 @@ export async function pageClients(
   const owed = database
     .select({
       clientId: invoices.clientId,
-      owed: sql<string>`sum(${invoices.totalMinor} - ${invoices.paidMinor} - ${invoices.writtenOffMinor})`.as(
+      owed: sql<string>`sum(${invoices.totalMinor} - ${invoices.paidMinor} - ${invoices.writtenOffMinor} - ${invoices.creditedMinor})`.as(
         "owed",
       ),
     })

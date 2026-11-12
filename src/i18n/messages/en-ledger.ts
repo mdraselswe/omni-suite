@@ -88,6 +88,10 @@ export const enLedger = {
   "statement.kind.invoice": "Invoice",
   "statement.kind.payment": "Payment for",
   "statement.kind.writeOff": "Written off on",
+  "statement.kind.creditNote": "Credit note on",
+  "statement.kind.refund": "Refund for",
+  "statement.credited": "Credits and write-offs",
+  "statement.creditNoteRef": "({number})",
 
   // Aged receivables
   "aged.title": "Who owes what",

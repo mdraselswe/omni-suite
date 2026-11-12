@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, count, desc, eq, gte, inArray, lte, notInArray, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNull, lte, notInArray, sql, type SQL } from "drizzle-orm";
 import { t } from "@/i18n";
 import type { CustomValues } from "@/lib/custom-fields";
 import { addDays, addMonthsAnchored, formatDate, today as todayIn } from "@/lib/dates";
@@ -13,6 +13,7 @@ import {
   accounts,
   categories,
   clients,
+  invoiceAdjustments,
   invoicePayments,
   invoices,
   recurringInvoices,
@@ -20,6 +21,7 @@ import {
   transactions,
 } from "@/server/db/schema";
 import { matchesSearch } from "@/server/search";
+import { ensureShareToken, shareUrl } from "@/server/share-links";
 import { clientUserIds, nextCounter, notify, queueMail } from "@/server/shared";
 import type { TenantContext } from "@/server/tenancy/context";
 import { assertOpenDate, insertTransaction, isClosedDate, type Writer } from "@/features/finance";
@@ -40,27 +42,31 @@ export function displayStatus(
     : inv.status;
 }
 
-/** What the client still owes: nothing on drafts and void invoices, never below zero. */
-export function invoiceBalance(inv: {
+type Settlement = {
   status: InvoiceStatus;
   totalMinor: bigint;
   paidMinor: bigint;
   writtenOffMinor: bigint;
-}): bigint {
+  creditedMinor: bigint;
+};
+
+/**
+ * What the client still owes: total less paid, written off and credited. Nothing on
+ * drafts and void invoices, never below zero. Every page uses this (or the same SQL).
+ */
+export function invoiceBalance(inv: Settlement): bigint {
   if (inv.status === "draft" || inv.status === "void") return 0n;
-  const owed = inv.totalMinor - inv.paidMinor - inv.writtenOffMinor;
+  const owed = inv.totalMinor - inv.paidMinor - inv.writtenOffMinor - inv.creditedMinor;
   return owed > 0n ? owed : 0n;
 }
 
-/** Status after the paid or written-off amount changed (draft and void stay). */
-export function settledStatus(inv: {
-  status: InvoiceStatus;
-  totalMinor: bigint;
-  paidMinor: bigint;
-  writtenOffMinor: bigint;
-}): InvoiceStatus {
+/** The same "owed" in SQL, for lists and totals. */
+export const owedSql = sql`(${invoices.totalMinor} - ${invoices.paidMinor} - ${invoices.writtenOffMinor} - ${invoices.creditedMinor})`;
+
+/** Status after the paid, written-off or credited amount changed (draft and void stay). */
+export function settledStatus(inv: Settlement): InvoiceStatus {
   if (inv.status === "draft" || inv.status === "void") return inv.status;
-  if (inv.paidMinor + inv.writtenOffMinor >= inv.totalMinor) return "paid";
+  if (inv.paidMinor + inv.writtenOffMinor + inv.creditedMinor >= inv.totalMinor) return "paid";
   return inv.paidMinor > 0n ? "partially_paid" : "sent";
 }
 
@@ -139,7 +145,7 @@ export async function createInvoice(
   return database.transaction((tx) => insertInvoice(tx, actorOf(ctx), input));
 }
 
-async function loadInvoice(tx: DbOrTx, tenantId: string, id: string) {
+export async function loadInvoice(tx: DbOrTx, tenantId: string, id: string) {
   const [inv] = await tx
     .select()
     .from(invoices)
@@ -197,7 +203,10 @@ export async function updateInvoice(
 export type Delivery = "portal" | "email" | "none";
 
 /** Why the client is hearing about an invoice. */
-export type DeliveryKind = "new" | "reminder";
+export type DeliveryKind = "new" | "reminder" | "credit";
+
+/** A credit note the client is told about (kind "credit"). */
+export type CreditNotice = { number: string; amountMinor: bigint; refundMinor: bigint };
 
 /**
  * Tells the client about an invoice: in the portal (with an email) for portal users
@@ -209,6 +218,7 @@ export async function deliverInvoiceTx(
   actor: Actor,
   inv: typeof invoices.$inferSelect,
   kind: DeliveryKind,
+  credit?: CreditNotice,
 ): Promise<Delivery> {
   const settings = actor.tenant.settings;
   const money = (minor: bigint) => formatMoney(minor, inv.currency, settings.locale);
@@ -217,12 +227,21 @@ export async function deliverInvoiceTx(
   const late = inv.dueDate < todayIn(settings.timezone);
   const vars = { number: inv.number, name: business, business, total: money(inv.totalMinor), due };
   const balance = money(invoiceBalance(inv));
-  const title =
-    kind === "new"
+  const creditVars = credit && {
+    ...vars,
+    credit: credit.number,
+    amount: money(credit.amountMinor),
+    refund: money(credit.refundMinor),
+    balance,
+  };
+  const title = creditVars
+    ? t("credit.notifyTitle", creditVars)
+    : kind === "new"
       ? t("invoices.notifyTitle", vars)
       : t(late ? "invoices.reminderLateTitle" : "invoices.reminderTitle", vars);
-  const body =
-    kind === "new"
+  const body = creditVars
+    ? t(credit.refundMinor > 0n ? "credit.notifyBodyRefund" : "credit.notifyBody", creditVars)
+    : kind === "new"
       ? t("invoices.notifyBody", vars)
       : t(late ? "invoices.reminderLateBody" : "invoices.reminderBody", { ...vars, balance });
   const portalUsers = await clientUserIds(tx, actor.tenant.id, inv.clientId, "portal.invoices");
@@ -244,9 +263,12 @@ export async function deliverInvoiceTx(
     .from(clients)
     .where(eq(clients.id, inv.clientId));
   if (!client?.email) return "none";
+  // No login needed: the link opens this invoice to view, print or pay online.
+  const link = shareUrl("invoice", await ensureShareToken(tx, "invoice", actor.tenant.id, inv.id));
   const text = [
     t("invoices.emailGreeting", { name: client.greet }),
     kind === "new" ? t("invoices.emailBody", vars) : body,
+    t("share.invoiceEmail", { url: link }),
     settings.invoiceFooter.trim(),
   ]
     .filter(Boolean)
@@ -402,6 +424,7 @@ export async function voidInvoice(database: Database, ctx: TenantContext, id: st
     const inv = await loadInvoice(tx, ctx.tenant.id, id);
     if (inv.status === "void") return;
     if (inv.paidMinor > 0n) throw new UserError(t("invoices.hasPayments"));
+    if (inv.creditedMinor > 0n) throw new UserError(t("credit.voidFirst"));
     // A sent invoice counts in that period's tax report; a closed period must not change.
     if (inv.status !== "draft") await assertOpenDate(tx, ctx.tenant.id, inv.issueDate);
     await tx.update(invoices).set({ status: "void" }).where(eq(invoices.id, id));
@@ -549,14 +572,22 @@ export async function writeOffBalance(
     const balance = invoiceBalance(inv);
     if (balance <= 0n) throw new UserError(t("invoices.notPayable"));
     const writtenOffMinor = inv.writtenOffMinor + balance;
+    const date = todayIn(ctx.tenant.settings.timezone);
     await tx
       .update(invoices)
-      .set({
-        writtenOffMinor,
-        writtenOffDate: todayIn(ctx.tenant.settings.timezone),
-        status: settledStatus({ ...inv, writtenOffMinor }),
-      })
+      .set({ writtenOffMinor, writtenOffDate: date, status: settledStatus({ ...inv, writtenOffMinor }) })
       .where(eq(invoices.id, inv.id));
+    // Each write-off keeps its own day, so a later one never moves an earlier one on statements.
+    await tx.insert(invoiceAdjustments).values({
+      tenantId: ctx.tenant.id,
+      invoiceId: inv.id,
+      kind: "write_off",
+      date,
+      amountMinor: balance,
+      taxMinor: allocateShare(inv.taxMinor, balance, inv.totalMinor),
+      reason,
+      createdBy: ctx.user.id,
+    });
     await audit(tx, {
       tenantId: ctx.tenant.id,
       actorUserId: ctx.user.id,
@@ -676,7 +707,7 @@ export async function getInvoice(database: DbOrTx, tenantId: string, id: string)
  * to base amounts without a rate).
  */
 export async function receivables(database: DbOrTx, tenantId: string, today: string, baseCurrency: string) {
-  const owed = sql`(${invoices.totalMinor} - ${invoices.paidMinor} - ${invoices.writtenOffMinor})`;
+  const owed = owedSql;
   const rows = await database
     .select({
       currency: invoices.currency,
@@ -736,6 +767,19 @@ export async function gstSummary(database: DbOrTx, tenantId: string, from: strin
         notInArray(invoices.status, ["draft", "void"]),
       ),
     );
+  // Credit notes issued in the range lower the GST on sales (an adjustment note).
+  const [credits] = await database
+    .select({ tax: sql<string>`coalesce(sum(${invoiceAdjustments.taxMinor}), 0)` })
+    .from(invoiceAdjustments)
+    .where(
+      and(
+        eq(invoiceAdjustments.tenantId, tenantId),
+        eq(invoiceAdjustments.kind, "credit_note"),
+        isNull(invoiceAdjustments.voidedAt),
+        gte(invoiceAdjustments.date, from),
+        lte(invoiceAdjustments.date, to),
+      ),
+    );
   const salesTaxMinor = BigInt(cash?.salesTax ?? "0");
   const purchaseTaxMinor = BigInt(cash?.purchaseTax ?? "0");
   return {
@@ -749,7 +793,7 @@ export async function gstSummary(database: DbOrTx, tenantId: string, from: strin
     /** 1A − 1B: positive means owed to the tax office. */
     netTaxMinor: salesTaxMinor - purchaseTaxMinor,
     /** GST on invoices issued in the range (accrual view). */
-    accrualTaxMinor: BigInt(accrual?.tax ?? "0"),
+    accrualTaxMinor: BigInt(accrual?.tax ?? "0") - BigInt(credits?.tax ?? "0"),
   };
 }
 

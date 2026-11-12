@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { boolean, index, integer, jsonb, pgTable, text, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { createdAt, day, money, pk, ts, updatedAt } from "./columns";
 import { user } from "./auth";
@@ -132,12 +133,15 @@ export const proposals = pgTable(
     respondedIp: text("responded_ip"),
     /** The client's optional reason when they declined (shown to staff). */
     declineReason: text("decline_reason").notNull().default(""),
+    /** Secret for the client's sign-in-free link (/d/…); null until shared, replaced to revoke. */
+    shareToken: text("share_token"),
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
     createdAt: createdAt(),
   },
   (t) => [
     index("proposals_tenant_client_idx").on(t.tenantId, t.clientId),
     uniqueIndex("proposals_tenant_number_uq").on(t.tenantId, t.number),
+    uniqueIndex("proposals_share_token_uq").on(t.shareToken),
   ],
 );
 
@@ -161,10 +165,14 @@ export const invoices = pgTable(
     taxMinor: money("tax_minor"),
     totalMinor: money("total_minor"),
     paidMinor: money("paid_minor"),
-    /** Unpaid amount written off as a bad debt or discount (no longer owed). */
+    /** Unpaid amount written off as a bad debt or discount (no longer owed). Sum of live write-offs. */
     writtenOffMinor: money("written_off_minor"),
-    /** When the unpaid balance was written off (client statements show it on this day). */
+    /** Last write-off day (kept for older code; statements date each write-off from invoice_adjustments). */
     writtenOffDate: day("written_off_date"),
+    /** Credited by live credit notes (no longer owed; any part already paid was refunded). */
+    creditedMinor: money("credited_minor"),
+    /** Secret for the client's sign-in-free link (/d/…); null until shared, replaced to revoke. */
+    shareToken: text("share_token"),
     /** Payment reminders sent so far, and the day the next one is due (null: none planned). */
     reminderCount: integer("reminder_count").notNull().default(0),
     nextReminderOn: day("next_reminder_on"),
@@ -181,6 +189,45 @@ export const invoices = pgTable(
     index("invoices_tenant_status_due_idx").on(t.tenantId, t.status, t.dueDate),
     index("invoices_tenant_client_idx").on(t.tenantId, t.clientId),
     uniqueIndex("invoices_tenant_number_uq").on(t.tenantId, t.number),
+    uniqueIndex("invoices_share_token_uq").on(t.shareToken),
+  ],
+);
+
+/**
+ * What reduced an invoice without money coming in, each on its own day: write-offs
+ * (bad debt, discount) and credit notes (a correction issued to the client; any part
+ * of it already paid is refunded through the ledger). Statements read these rows.
+ */
+export const invoiceAdjustments = pgTable(
+  "invoice_adjustments",
+  {
+    id: pk(),
+    tenantId: tenantRef(),
+    invoiceId: uuid("invoice_id")
+      .notNull()
+      .references(() => invoices.id),
+    kind: text("kind", { enum: ["write_off", "credit_note"] }).notNull(),
+    /** Credit notes get their own number (CN-0001); write-offs have none. */
+    number: text("number"),
+    date: day("date").notNull(),
+    /** Amount taken off the invoice, tax included, in the invoice's currency. */
+    amountMinor: money("amount_minor"),
+    /** The tax inside `amountMinor` (the invoice's tax pro rata). */
+    taxMinor: money("tax_minor"),
+    /** Part of a credit note paid back to the client (the rest reduced what was owed). */
+    refundedMinor: money("refunded_minor"),
+    /** The refund's invoice payment (negative) when money was paid back. */
+    refundPaymentId: uuid("refund_payment_id"),
+    reason: text("reason").notNull().default(""),
+    voidedAt: ts("voided_at"),
+    createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("invoice_adjustments_invoice_idx").on(t.tenantId, t.invoiceId),
+    uniqueIndex("invoice_adjustments_number_uq")
+      .on(t.tenantId, t.number)
+      .where(sql`${t.number} is not null`),
   ],
 );
 

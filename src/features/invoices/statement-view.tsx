@@ -46,12 +46,13 @@ export function StatementView({ statements, f, business, clientName, from, to, i
       ) : (
         statements.map((st) => (
           <section key={st.currency} className="grid gap-4" aria-label={st.currency}>
-            <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+            <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3 lg:grid-cols-5">
               {(
                 [
                   { key: "statement.opening", amount: st.openingMinor },
                   { key: "statement.invoiced", amount: st.invoicedMinor },
                   { key: "statement.paid", amount: st.paidMinor },
+                  { key: "statement.credited", amount: st.creditedMinor },
                   { key: "statement.closing", amount: st.closingMinor },
                 ] as const
               ).map(({ key, amount }) => (
@@ -90,6 +91,12 @@ export function StatementView({ statements, f, business, clientName, from, to, i
                       >
                         {e.number}
                       </Link>
+                      {e.reference ? (
+                        <span className="text-muted-foreground">
+                          {" "}
+                          {t("statement.creditNoteRef", { number: e.reference })}
+                        </span>
+                      ) : null}
                     </TableCell>
                     <TableCell className="text-right whitespace-nowrap tabular-nums">
                       {e.amountMinor < 0n ? "−" : ""}

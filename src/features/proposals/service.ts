@@ -10,6 +10,7 @@ import { audit, markChanged } from "@/server/audit";
 import type { Database, DbOrTx } from "@/server/db";
 import { clients, invoices, projects, proposals } from "@/server/db/schema";
 import { matchesSearch } from "@/server/search";
+import { ensureShareToken, shareUrl } from "@/server/share-links";
 import { clientUserIds, nextCounter, notify, queueMail, usersWithPermission } from "@/server/shared";
 import type { TenantContext } from "@/server/tenancy/context";
 import { actorOf, insertInvoice, type Delivery } from "@/features/invoices";
@@ -149,6 +150,10 @@ export async function sendProposal(database: Database, ctx: TenantContext, id: s
             text: [
               t("invoices.emailGreeting", { name: client.contactName.trim() || client.name }),
               t("proposals.emailBody", { business, title: p.title, number: p.number }),
+              // No login needed: the link opens this proposal, to read and accept or decline.
+              t("share.proposalEmail", {
+                url: shareUrl("proposal", await ensureShareToken(tx, "proposal", ctx.tenant.id, p.id)),
+              }),
             ].join("\n\n"),
           },
           { tenantId: ctx.tenant.id },
@@ -247,23 +252,54 @@ const linesValue = (items: readonly LineItem[]) => items.reduce((sum, item) => s
  * The client accepts or declines in the portal. Their name and IP are kept as evidence.
  * Accepting a proposal with terms needs `acceptTerms`; declining may give a reason.
  */
+export type ProposalResponse = {
+  accept: boolean;
+  name: string;
+  ip: string;
+  today: string;
+  acceptTerms?: boolean;
+  reason?: string;
+};
+
+/** Who answers a proposal: a portal user (for their client only), or a share-link visitor. */
+export type Responder = {
+  tenant: TenantContext["tenant"];
+  /** Null for a share-link visitor (no login). */
+  userId: string | null;
+  /** The client they answer for; null = staff (any client of the business). */
+  clientId: string | null;
+  via: "portal" | "link";
+};
+
 export async function respondToProposal(
   database: Database,
   ctx: TenantContext,
   id: string,
-  input: {
-    accept: boolean;
-    name: string;
-    ip: string;
-    today: string;
-    acceptTerms?: boolean;
-    reason?: string;
-  },
+  input: ProposalResponse,
 ) {
+  await respondToProposalAs(
+    database,
+    {
+      tenant: ctx.tenant,
+      userId: ctx.user.id,
+      clientId: ctx.membership.kind === "client" ? (ctx.membership.clientId ?? "") : null,
+      via: "portal",
+    },
+    id,
+    input,
+  );
+}
+
+export async function respondToProposalAs(
+  database: Database,
+  who: Responder,
+  id: string,
+  input: ProposalResponse,
+) {
+  const ctx = who;
   await database.transaction(async (tx) => {
     const p = await loadProposal(tx, ctx.tenant.id, id);
-    if (ctx.membership.kind === "client" && p.clientId !== ctx.membership.clientId)
-      throw new UserError(t("proposals.missing"));
+    if (who.clientId !== null && p.clientId !== who.clientId) throw new UserError(t("proposals.missing"));
     if (p.status !== "sent") throw new UserError(t("proposals.notOpen"));
     if (isProposalExpired(p, input.today))
       throw new UserError(
@@ -295,13 +331,14 @@ export async function respondToProposal(
     });
     await audit(tx, {
       tenantId: ctx.tenant.id,
-      actorUserId: ctx.user.id,
+      actorUserId: who.userId,
       action: input.accept ? "proposal.accept" : "proposal.decline",
       entityType: "proposal",
       entityId: id,
       data: {
         name: input.name,
         ip: input.ip,
+        via: who.via,
         ...(reason ? { reason } : {}),
         acceptTerms: !!input.acceptTerms,
       },

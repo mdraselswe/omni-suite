@@ -337,6 +337,12 @@ export type NewTransaction = {
   taxMinor?: bigint;
   /** Transfer to an account in another currency: the amount that arrived there. */
   toAmountMinor?: bigint;
+  /**
+   * Income paid back (a credit note's refund): `amountMinor` and `taxMinor` are given
+   * as positive numbers and stored negative, so income, tax collected and the account
+   * balance all go down by them. Income only.
+   */
+  refund?: boolean;
 };
 
 /** Inserts a ledger row inside an existing transaction (used by invoices and partners too). */
@@ -353,6 +359,8 @@ export async function insertTransaction(tx: DbOrTx, ctx: Writer, input: NewTrans
   // Capital and drawings belong to a partner: their account, profit share and statement depend on it.
   if ((input.kind === "capital_in" || input.kind === "drawing") && !input.partnerId)
     throw new UserError(t("finance.partnerRequired"));
+  if (input.refund && input.kind !== "income") throw new Error("Only income can be refunded");
+  const sign = input.refund ? -1n : 1n;
   await assertOpenDate(tx, ctx.tenant.id, input.date);
   const [account] = await tx
     .select()
@@ -414,11 +422,11 @@ export async function insertTransaction(tx: DbOrTx, ctx: Writer, input: NewTrans
       categoryId: input.kind === "income" || input.kind === "expense" ? (input.categoryId ?? null) : null,
       date: input.date,
       description: input.description,
-      amountMinor: input.amountMinor,
+      amountMinor: sign * input.amountMinor,
       currency: account.currency,
-      baseAmountMinor,
-      taxMinor,
-      baseTaxMinor,
+      baseAmountMinor: sign * baseAmountMinor,
+      taxMinor: sign * taxMinor,
+      baseTaxMinor: sign * baseTaxMinor,
       fxRate,
       partnerId: input.partnerId ?? null,
       clientId: input.clientId ?? null,
@@ -560,19 +568,22 @@ async function undoLinkedRecords(
           .for("update")
       : [];
     if (payment && inv) {
+      // A credit note's refund: it stays with its credit note (money paid out isn't un-paid here).
+      if (payment.amountMinor < 0n) throw new UserError(t("credit.refundLocked"));
       await tx
         .update(invoicePayments)
         .set({ reversedAt: new Date() })
         .where(eq(invoicePayments.id, payment.id));
       const paid = inv.paidMinor > payment.amountMinor ? inv.paidMinor - payment.amountMinor : 0n;
+      // Same rule as the invoice's own settled status (finance can't import invoices).
       const status =
-        inv.status === "void"
-          ? "void"
-          : paid <= 0n
-            ? "sent"
-            : paid >= inv.totalMinor
-              ? "paid"
-              : "partially_paid";
+        inv.status === "void" || inv.status === "draft"
+          ? inv.status
+          : paid + inv.writtenOffMinor + inv.creditedMinor >= inv.totalMinor
+            ? "paid"
+            : paid > 0n
+              ? "partially_paid"
+              : "sent";
       await tx.update(invoices).set({ paidMinor: paid, status }).where(eq(invoices.id, inv.id));
       await audit(tx, {
         tenantId: ctx.tenant.id,
