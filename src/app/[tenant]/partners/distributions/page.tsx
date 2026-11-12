@@ -1,5 +1,6 @@
 import { FilterBar, FilterDate, param } from "@/components/data/filter-bar";
 import { formatters } from "@/components/data/format";
+import { Pagination } from "@/components/data/pagination";
 import { StatusBadge } from "@/components/data/status-badge";
 import { ActionButton } from "@/components/form/action-button";
 import { ActionForm, SubmitButton } from "@/components/form/action-form";
@@ -10,14 +11,16 @@ import {
   computeDistribution,
   deleteDistributionAction,
   finaliseDistributionAction,
-  listDistributions,
   listPartners,
   listRules,
+  pageDistributions,
   ruleFor,
   saveDistributionAction,
 } from "@/features/partners";
 import { t } from "@/i18n";
 import { addDays, isIsoDate, monthStart, today } from "@/lib/dates";
+import { tenantHref } from "@/lib/href";
+import { parsePage } from "@/lib/pagination";
 import { requireTenantPermission } from "@/server/auth/session";
 import { UserError } from "@/server/action";
 import { db } from "@/server/db";
@@ -36,11 +39,13 @@ export default async function DistributionsPage({
   const start = isIsoDate(param(sp, "start")) ? param(sp, "start") : monthStart(lastMonthEnd);
   const end = isIsoDate(param(sp, "end")) ? param(sp, "end") : lastMonthEnd;
   const canRun = hasPermission(ctx, "distributions.run", "all");
-  const [runs, partners, rules] = await Promise.all([
-    listDistributions(db(), ctx.tenant.id),
+  const page = parsePage(sp);
+  const [found, partners, rules] = await Promise.all([
+    pageDistributions(db(), ctx.tenant.id, page),
     listPartners(db(), ctx.tenant.id, now),
     listRules(db(), ctx.tenant.id),
   ]);
+  const runs = found.rows;
   const rule = ruleFor(rules, start);
   const manual = rule?.config.method.type === "weighted" && rule.config.method.laborSource === "manual";
   const manualLabor = Object.fromEntries(
@@ -188,6 +193,13 @@ export default async function DistributionsPage({
             ))}
           </ul>
         )}
+        <Pagination
+          path={tenantHref(tenant, "partners/distributions")}
+          searchParams={sp}
+          request={page}
+          paged={found}
+          locale={f.locale}
+        />
       </Section>
     </div>
   );

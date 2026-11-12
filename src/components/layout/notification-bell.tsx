@@ -48,15 +48,19 @@ export function NotificationBell({
           <Button
             variant="ghost"
             size="icon"
-            className="relative size-10 rounded-full header-control"
+            className="group/bell relative size-10 header-control rounded-full"
             aria-label={label}
           />
         }
       >
-        <Bell className="size-4" aria-hidden="true" />
+        <Bell
+          className="size-4 origin-top transition-transform duration-300 group-hover/bell:rotate-12"
+          aria-hidden="true"
+        />
         {unread > 0 ? (
-          <span className="absolute -top-0.5 -right-0.5 grid min-w-4 place-items-center rounded-full bg-primary px-1 text-[10px] leading-4 font-semibold text-primary-foreground">
-            {unread > 99 ? "99+" : unread}
+          <span className="absolute -top-0.5 -right-0.5 grid min-w-4 animate-pop place-items-center rounded-full bg-primary px-1 text-[10px] leading-4 font-semibold text-primary-foreground">
+            <span className="absolute inset-0 animate-ping-soft rounded-full bg-primary" aria-hidden="true" />
+            <span className="relative">{unread > 99 ? "99+" : unread}</span>
           </span>
         ) : null}
       </DropdownMenuTrigger>

@@ -1,19 +1,23 @@
 import Link from "next/link";
-import { FilterBar, FilterSelect, param } from "@/components/data/filter-bar";
+import { FilterBar, FilterSearch, FilterSelect, param } from "@/components/data/filter-bar";
 import { formatters } from "@/components/data/format";
-import { StatusBadge } from "@/components/data/status-badge";
+import { NoResults } from "@/components/data/no-results";
+import { Pagination } from "@/components/data/pagination";
 import { EmptyState, PageHeader } from "@/components/layout/page";
 import { ButtonLink } from "@/components/ui/button-link";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { listProposals } from "@/features/proposals";
+import { pageProposals, proposalDisplayStatus, ProposalStatusBadge } from "@/features/proposals";
 import { t } from "@/i18n";
+import { today } from "@/lib/dates";
 import { tenantHref } from "@/lib/href";
+import { keepSize, parsePage } from "@/lib/pagination";
+import { normaliseSearch } from "@/lib/search";
 import { requireTenantPermission } from "@/server/auth/session";
 import { db } from "@/server/db";
 import { clientOptions } from "@/server/options";
 import { hasPermission } from "@/server/tenancy/context";
 
-const STATUSES = ["draft", "sent", "accepted", "declined"] as const;
+const STATUSES = ["draft", "sent", "expired", "accepted", "declined"] as const;
 
 export default async function ProposalsPage({ params, searchParams }: PageProps<"/[tenant]/proposals">) {
   const { tenant } = await params;
@@ -24,12 +28,16 @@ export default async function ProposalsPage({ params, searchParams }: PageProps<
   const clientId = /^[0-9a-f-]{36}$/.test(clientParam) ? clientParam : undefined;
   const statusParam = param(sp, "status");
   const status = STATUSES.find((s) => s === statusParam);
+  const q = normaliseSearch(param(sp, "q"));
+  const page = parsePage(sp);
+  const path = tenantHref(tenant, "proposals");
+  const now = today(ctx.tenant.settings.timezone);
   const database = db();
-  const [rows, clients] = await Promise.all([
-    listProposals(database, ctx.tenant.id, { clientId }),
+  const [found, clients] = await Promise.all([
+    pageProposals(database, ctx.tenant.id, { clientId, status, q, today: now }, page),
     clientOptions(database, ctx.tenant.id),
   ]);
-  const visible = status ? rows.filter((r) => r.proposal.status === status) : rows;
+  const visible = found.rows;
 
   return (
     <div className="grid gap-4">
@@ -43,7 +51,7 @@ export default async function ProposalsPage({ params, searchParams }: PageProps<
         }
         className="mb-2"
       />
-      <FilterBar>
+      <FilterBar keep={keepSize(page)}>
         <FilterSelect
           name="status"
           label={t("form.status")}
@@ -51,9 +59,14 @@ export default async function ProposalsPage({ params, searchParams }: PageProps<
           options={STATUSES.map((s) => ({ value: s, label: t(`proposals.status.${s}`) }))}
         />
         <FilterSelect name="client" label={t("team.client")} value={clientId} options={clients} />
+        <FilterSearch value={q} />
       </FilterBar>
       {visible.length === 0 ? (
-        <EmptyState title={t("proposals.none")} />
+        q ? (
+          <NoResults q={q} path={path} searchParams={sp} />
+        ) : (
+          <EmptyState title={t("proposals.none")} />
+        )
       ) : (
         <Table>
           <TableHeader>
@@ -76,10 +89,15 @@ export default async function ProposalsPage({ params, searchParams }: PageProps<
                     {p.number}
                   </Link>
                 </TableCell>
-                <TableCell className="whitespace-normal">{p.title}</TableCell>
+                <TableCell className="whitespace-normal">
+                  {p.title}
+                  <span className="mt-1 block sm:hidden">
+                    <ProposalStatusBadge status={proposalDisplayStatus(p, now)} />
+                  </span>
+                </TableCell>
                 <TableCell className="hidden md:table-cell">{clientName}</TableCell>
                 <TableCell className="hidden sm:table-cell">
-                  <StatusBadge status={p.status} label={t(`proposals.status.${p.status}`)} />
+                  <ProposalStatusBadge status={proposalDisplayStatus(p, now)} />
                 </TableCell>
                 <TableCell className="text-right tabular-nums">{f.money(p.totalMinor, p.currency)}</TableCell>
               </TableRow>
@@ -87,6 +105,7 @@ export default async function ProposalsPage({ params, searchParams }: PageProps<
           </TableBody>
         </Table>
       )}
+      <Pagination path={path} searchParams={sp} request={page} paged={found} locale={f.locale} />
     </div>
   );
 }

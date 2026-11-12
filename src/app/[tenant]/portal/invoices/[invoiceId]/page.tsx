@@ -1,11 +1,12 @@
 import { notFound } from "next/navigation";
 import { param } from "@/components/data/filter-bar";
 import { formatters } from "@/components/data/format";
+import { StatusBadge } from "@/components/data/status-badge";
 import { ActionButton } from "@/components/form/action-button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { StatusBadge } from "@/components/data/status-badge";
 import { ButtonLink } from "@/components/ui/button-link";
-import { displayStatus, getInvoice, PrintButton } from "@/features/invoices";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { displayStatus, getInvoice, invoiceBalance, PrintButton } from "@/features/invoices";
 import { canPayOnline, payInvoiceAction } from "@/features/payments";
 import { t } from "@/i18n";
 import { today } from "@/lib/dates";
@@ -32,11 +33,18 @@ export default async function PortalInvoice({
   const settings = ctx.tenant.settings;
   const status = displayStatus(invoice, today(settings.timezone));
   const business = settings.branding.displayName || ctx.tenant.name;
-  const balance = invoice.totalMinor - invoice.paidMinor;
+  const balance = invoiceBalance(invoice);
+  const isVoid = invoice.status === "void";
+  const isPaid = invoice.status === "paid";
+  // Reversed payments no longer count; the client only sees what was really paid.
+  const paidList = payments.filter((p) => !p.reversedAt);
+  const lastPaid = paidList.reduce<string | null>((last, p) => (last && last > p.date ? last : p.date), null);
   const payable =
     (invoice.status === "sent" || invoice.status === "partially_paid") &&
     balance > 0n &&
     (await canPayOnline(db(), ctx.tenant.id, invoice.currency));
+  const methodLabel = (method: string) =>
+    method === "stripe" ? t("payments.method.stripe") : method.trim() || t("portalWork.methodUnknown");
 
   return (
     <div className="grid gap-6">
@@ -55,12 +63,18 @@ export default async function PortalInvoice({
               {t("payments.payOnline", { amount: money(balance) })}
             </ActionButton>
           ) : null}
+          <ButtonLink href={tenantHref(tenant, "portal/statement")} variant="outline">
+            {t("portalWork.statement")}
+          </ButtonLink>
           <PrintButton />
         </div>
       </div>
       {param(sp, "paid") ? (
-        <Alert className="print:hidden">
-          <AlertDescription>{t("payments.paidNotice")}</AlertDescription>
+        <Alert className="print:hidden" role="status">
+          <AlertDescription>
+            {/* Back from the payment page: the payment webhook may not have landed yet. */}
+            {isPaid ? t("portalWork.paymentReceived") : t("payments.paidNotice")}
+          </AlertDescription>
         </Alert>
       ) : param(sp, "cancelled") ? (
         <Alert className="print:hidden">
@@ -69,6 +83,17 @@ export default async function PortalInvoice({
       ) : null}
       {payable ? (
         <p className="-mt-4 text-xs text-muted-foreground print:hidden">{t("payments.secure")}</p>
+      ) : null}
+      {isVoid ? (
+        <Alert>
+          <AlertDescription>{t("portalWork.voidNotice")}</AlertDescription>
+        </Alert>
+      ) : isPaid ? (
+        <Alert>
+          <AlertDescription className="font-medium">
+            {lastPaid ? t("portalWork.paidInFull", { date: f.date(lastPaid) }) : t("portalWork.settled")}
+          </AlertDescription>
+        </Alert>
       ) : null}
 
       <article className="grid gap-6 surface p-4 sm:p-8 print:border-0 print:p-0">
@@ -81,7 +106,7 @@ export default async function PortalInvoice({
               </p>
             ) : null}
           </div>
-          <div className="grid gap-1 text-right">
+          <div className="grid justify-items-start gap-1 sm:justify-items-end sm:text-right">
             <h1 className="font-heading text-2xl font-semibold">{t("invoices.taxInvoice")}</h1>
             <p className="font-medium">{invoice.number}</p>
             <StatusBadge status={status} label={t(`invoices.status.${status}`)} />
@@ -93,7 +118,7 @@ export default async function PortalInvoice({
             <p className="text-xs font-medium text-muted-foreground">{t("invoices.billTo")}</p>
             <p className="font-medium">{client.name}</p>
             {client.address ? <p className="whitespace-pre-line">{client.address}</p> : null}
-            {client.email ? <p>{client.email}</p> : null}
+            {client.billingEmail || client.email ? <p>{client.billingEmail || client.email}</p> : null}
           </div>
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm sm:justify-self-end">
             <dt className="text-muted-foreground">{t("invoices.issueDate")}</dt>
@@ -110,29 +135,50 @@ export default async function PortalInvoice({
           taxMinor={invoice.taxMinor}
           totalMinor={invoice.totalMinor}
           taxName={settings.tax.name}
-          pricesIncludeTax={settings.tax.pricesIncludeTax}
+          pricesIncludeTax={invoice.pricesIncludeTax}
         />
 
         <dl className="grid grid-cols-[1fr_auto] gap-x-6 gap-y-1 text-sm sm:ml-auto sm:w-72">
           <dt>{t("invoices.paid")}</dt>
           <dd className="text-right tabular-nums">{money(invoice.paidMinor)}</dd>
+          {invoice.writtenOffMinor > 0n ? (
+            <>
+              <dt>{t("invoices.writtenOff")}</dt>
+              <dd className="text-right tabular-nums">{money(invoice.writtenOffMinor)}</dd>
+            </>
+          ) : null}
           <dt className="font-semibold">{t("invoices.balance")}</dt>
           <dd className="text-right font-semibold tabular-nums">
-            {money(invoice.totalMinor - invoice.paidMinor)}
+            {isVoid ? t("portalWork.nothingOwed") : money(balance)}
           </dd>
         </dl>
 
-        {payments.length > 0 ? (
-          <section className="grid gap-2 text-sm">
-            <h2 className="font-semibold">{t("invoices.payments")}</h2>
-            <ul className="grid gap-1">
-              {payments.map((p) => (
-                <li key={p.id} className="flex justify-between gap-4">
-                  <span>{f.date(p.date)}</span>
-                  <span className="tabular-nums">{money(p.amountMinor)}</span>
-                </li>
-              ))}
-            </ul>
+        {paidList.length > 0 ? (
+          <section className="grid gap-2 text-sm" aria-labelledby="receipt-heading">
+            <h2 id="receipt-heading" className="font-semibold">
+              {t("portalWork.receipt")}
+            </h2>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{t("portalWork.date")}</TableHead>
+                  <TableHead>{t("portalWork.method")}</TableHead>
+                  <TableHead className="text-right">{t("portalWork.amount")}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {paidList.map((p) => (
+                  <TableRow key={p.id}>
+                    <TableCell>{f.date(p.date)}</TableCell>
+                    <TableCell className="whitespace-normal">{methodLabel(p.method)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{money(p.amountMinor)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            {isPaid && lastPaid ? (
+              <p className="font-medium">{t("portalWork.paidInFull", { date: f.date(lastPaid) })}</p>
+            ) : null}
           </section>
         ) : null}
 

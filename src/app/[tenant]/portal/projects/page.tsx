@@ -1,25 +1,45 @@
 import Link from "next/link";
+import { FilterBar, FilterSearch, param } from "@/components/data/filter-bar";
 import { formatters } from "@/components/data/format";
+import { NoResults } from "@/components/data/no-results";
+import { Pagination } from "@/components/data/pagination";
 import { StatusBadge } from "@/components/data/status-badge";
 import { EmptyState, PageHeader } from "@/components/layout/page";
-import { listProjects } from "@/features/projects";
+import { pageProjects } from "@/features/projects";
 import { t } from "@/i18n";
 import { tenantHref } from "@/lib/href";
+import { keepSize, parsePage } from "@/lib/pagination";
+import { normaliseSearch } from "@/lib/search";
 import { db } from "@/server/db";
 import { portalPage } from "../_components/portal";
 
-export default async function PortalProjects({ params }: PageProps<"/[tenant]/portal/projects">) {
+export default async function PortalProjects({
+  params,
+  searchParams,
+}: PageProps<"/[tenant]/portal/projects">) {
   const { tenant } = await params;
+  const sp = await searchParams;
   const { ctx } = await portalPage(tenant, "portal.projects");
   const f = formatters(ctx);
-  const projects = await listProjects(db(), ctx, "all");
+  const q = normaliseSearch(param(sp, "q"));
+  const page = parsePage(sp);
+  const path = tenantHref(tenant, "portal/projects");
+  const found = await pageProjects(db(), ctx, "all", { q }, page);
+  const projects = found.rows;
   const statuses = ctx.tenant.settings.projectStatuses;
 
   return (
     <div className="grid gap-6">
       <PageHeader title={t("nav.portal.projects")} description={t("portal.projectsSub")} />
+      <FilterBar keep={keepSize(page)}>
+        <FilterSearch value={q} />
+      </FilterBar>
       {projects.length === 0 ? (
-        <EmptyState title={t("portal.nothing")} />
+        q ? (
+          <NoResults q={q} path={path} searchParams={sp} />
+        ) : (
+          <EmptyState title={t("portal.nothing")} />
+        )
       ) : (
         <ul className="grid gap-3 sm:grid-cols-2">
           {projects.map((p) => {
@@ -45,7 +65,7 @@ export default async function PortalProjects({ params }: PageProps<"/[tenant]/po
                       aria-valuenow={pct}
                       aria-valuemin={0}
                       aria-valuemax={100}
-                      aria-label={t("projects.progress")}
+                      aria-label={t("portalWork.progressLabel")}
                     >
                       <span className="block h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
                     </span>
@@ -60,6 +80,7 @@ export default async function PortalProjects({ params }: PageProps<"/[tenant]/po
           })}
         </ul>
       )}
+      <Pagination path={path} searchParams={sp} request={page} paged={found} locale={f.locale} />
     </div>
   );
 }

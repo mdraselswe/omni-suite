@@ -1,29 +1,32 @@
-import { FilterBar, FilterSelect, param } from "@/components/data/filter-bar";
+import Link from "next/link";
+import { FilterBar, FilterSearch, FilterSelect, param } from "@/components/data/filter-bar";
 import { formatters } from "@/components/data/format";
+import { NoResults } from "@/components/data/no-results";
+import { Pagination } from "@/components/data/pagination";
 import { ActionButton } from "@/components/form/action-button";
 import { CheckboxField, TextField } from "@/components/form/field";
-import { FormDialog } from "@/components/form/form-dialog";
 import { EmptyState, PageHeader, Section } from "@/components/layout/page";
 import { Badge } from "@/components/ui/badge";
-import { ButtonLink } from "@/components/ui/button-link";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   deleteFileAction,
   FileTargetFields,
   formatBytes,
-  listFiles,
+  pageFiles,
   toggleFileAction,
-  uploadFileAction,
+  UploadFileDialog,
   type FileEntity,
 } from "@/features/files";
 import { t } from "@/i18n";
 import { appHref, tenantHref } from "@/lib/href";
+import { keepSize, parsePage, queryWith } from "@/lib/pagination";
+import { normaliseSearch } from "@/lib/search";
 import { requireTenantPermission } from "@/server/auth/session";
 import { db } from "@/server/db";
 import { clientOptions, projectOptions } from "@/server/options";
 import { hasPermission } from "@/server/tenancy/context";
 
-const PAGE = 50;
+const UUID = /^[0-9a-f-]{36}$/;
 const ENTITIES: readonly FileEntity[] = ["general", "client", "project", "transaction"];
 
 export default async function FilesPage({ params, searchParams }: PageProps<"/[tenant]/files">) {
@@ -32,19 +35,19 @@ export default async function FilesPage({ params, searchParams }: PageProps<"/[t
   const { ctx, scope } = await requireTenantPermission(tenant, "files.read");
   const f = formatters(ctx);
   const entityType = ENTITIES.find((e) => e === param(sp, "type"));
-  const limit = Math.min(Number(param(sp, "limit")) || PAGE, 1000);
+  // One record's files ("View all" on a client page); only with a record type.
+  const entityId = entityType && UUID.test(param(sp, "entity")) ? param(sp, "entity") : undefined;
+  const q = normaliseSearch(param(sp, "q"));
+  const page = parsePage(sp);
+  const path = tenantHref(tenant, "files");
   const canWrite = hasPermission(ctx, "files.write");
   const database = db();
-  const [rows, clients, projects] = await Promise.all([
-    listFiles(database, ctx, scope, { entityType, limit: limit + 1 }),
+  const [found, clients, projects] = await Promise.all([
+    pageFiles(database, ctx, scope, { entityType, entityId, q }, page),
     clientOptions(database, ctx.tenant.id),
     projectOptions(database, ctx.tenant.id),
   ]);
-  const hasMore = rows.length > limit;
-  const files = rows.slice(0, limit);
-  const next = new URLSearchParams();
-  if (entityType) next.set("type", entityType);
-  next.set("limit", String(limit + PAGE));
+  const files = found.rows;
   const names = new Map([...clients, ...projects].map((o) => [o.value, o.label]));
 
   return (
@@ -54,29 +57,41 @@ export default async function FilesPage({ params, searchParams }: PageProps<"/[t
         description={t("files.sub")}
         actions={
           canWrite ? (
-            <FormDialog
-              trigger={t("files.upload")}
-              title={t("files.upload")}
-              action={uploadFileAction.bind(null, tenant)}
-            >
+            <UploadFileDialog tenant={tenant} trigger={t("files.upload")} title={t("files.upload")}>
               <TextField name="file" label={t("files.file")} type="file" required />
               <FileTargetFields clients={clients} projects={projects} />
               <CheckboxField name="clientVisible" label={t("files.clientVisible")} />
-            </FormDialog>
+            </UploadFileDialog>
           ) : null
         }
       />
       <Section title={t("files.title")}>
-        <FilterBar>
+        <FilterBar keep={{ ...keepSize(page), entity: entityId }}>
           <FilterSelect
             name="type"
             label={t("files.attachTo")}
             value={entityType}
             options={ENTITIES.map((e) => ({ value: e, label: t(`files.entity.${e}`) }))}
           />
+          <FilterSearch value={q} />
         </FilterBar>
+        {entityType && entityId ? (
+          <p className="text-sm text-muted-foreground">
+            {t(`files.entity.${entityType}`)}: {names.get(entityId) ?? ""} ·{" "}
+            <Link
+              href={appHref(`${path}${queryWith(sp, { entity: null, page: null })}`)}
+              className="font-medium text-primary underline-offset-4 hover:underline"
+            >
+              {t("list.showAll")}
+            </Link>
+          </p>
+        ) : null}
         {files.length === 0 ? (
-          <EmptyState title={t("files.none")} />
+          q ? (
+            <NoResults q={q} path={path} searchParams={sp} />
+          ) : (
+            <EmptyState title={t("files.none")} />
+          )
         ) : (
           <Table>
             <TableHeader>
@@ -141,15 +156,7 @@ export default async function FilesPage({ params, searchParams }: PageProps<"/[t
             </TableBody>
           </Table>
         )}
-        {hasMore ? (
-          <ButtonLink
-            href={tenantHref(tenant, `files?${next.toString()}`)}
-            variant="outline"
-            className="justify-self-center"
-          >
-            {t("list.loadMore")}
-          </ButtonLink>
-        ) : null}
+        <Pagination path={path} searchParams={sp} request={page} paged={found} locale={f.locale} />
       </Section>
     </div>
   );

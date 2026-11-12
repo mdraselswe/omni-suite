@@ -4,10 +4,11 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { EmptyState, PageHeader, Section, StatCard } from "@/components/layout/page";
 import { ButtonLink } from "@/components/ui/button-link";
 import { onboardingForClient } from "@/features/clients";
-import { listInvoices } from "@/features/invoices";
+import { invoiceBalance, listInvoices } from "@/features/invoices";
 import { listProjects, listTasks } from "@/features/projects";
-import { listProposals } from "@/features/proposals";
+import { listProposals, proposalDisplayStatus } from "@/features/proposals";
 import { t } from "@/i18n";
+import { businessName } from "@/lib/business-name";
 import { today } from "@/lib/dates";
 import { tenantHref } from "@/lib/href";
 import { db } from "@/server/db";
@@ -41,17 +42,23 @@ export default async function PortalHome({ params }: PageProps<"/[tenant]/portal
   const unpaid = (invoices ?? []).filter(
     (r) => r.invoice.status === "sent" || r.invoice.status === "partially_paid",
   );
-  const dueMinor = unpaid.reduce((sum, r) => sum + r.invoice.totalMinor - r.invoice.paidMinor, 0n);
-  const openProposals = (proposals ?? []).filter((r) => r.proposal.status === "sent");
-  const openOnboarding = (onboarding ?? []).find((o) => o.status === "sent");
+  // Owed per currency: amounts in different currencies are never added together.
+  const due = new Map<string, bigint>();
+  for (const r of unpaid)
+    due.set(r.invoice.currency, (due.get(r.invoice.currency) ?? 0n) + invoiceBalance(r.invoice));
+  const dueText =
+    due.size === 0 ? f.money(0n) : [...due].map(([currency, minor]) => f.money(minor, currency)).join(" + ");
   const now = today(ctx.tenant.settings.timezone);
+  // Waiting on the client: sent and still valid (an expired one can no longer be accepted).
+  const openProposals = (proposals ?? []).filter((r) => proposalDisplayStatus(r.proposal, now) === "sent");
+  const openOnboarding = (onboarding ?? []).find((o) => o.status === "sent");
 
   return (
     <div className="grid gap-8">
       <PageHeader
         title={t("portal.welcome", { name: ctx.user.name })}
-        description={t("portal.sub", {
-          business: ctx.tenant.settings.branding.displayName || ctx.tenant.name,
+        description={t(invoices ? "portal.sub" : "portal.subWork", {
+          business: businessName(ctx.tenant),
         })}
       />
 
@@ -71,7 +78,7 @@ export default async function PortalHome({ params }: PageProps<"/[tenant]/portal
         {invoices ? (
           <StatCard
             label={t("portal.amountDue")}
-            value={f.money(dueMinor)}
+            value={dueText}
             hint={t("portal.dueInvoices")}
             tone={unpaid.some((r) => r.invoice.dueDate < now) ? "negative" : "default"}
           />
@@ -147,11 +154,13 @@ export default async function PortalHome({ params }: PageProps<"/[tenant]/portal
                               : "text-xs text-muted-foreground"
                           }
                         >
+                          {/* Said in words, not only in red. */}
+                          {invoice.dueDate < now ? `${t("invoices.status.overdue")} · ` : ""}
                           {t("portal.due", { date: f.date(invoice.dueDate) })}
                         </span>
                       </span>
                       <span className="tabular-nums">
-                        {f.money(invoice.totalMinor - invoice.paidMinor, invoice.currency)}
+                        {f.money(invoiceBalance(invoice), invoice.currency)}
                       </span>
                     </Link>
                   </li>

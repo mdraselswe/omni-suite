@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { formatters } from "@/components/data/format";
-import { DocumentLines, getInvoice, PrintButton } from "@/features/invoices";
+import { DocumentLines, getInvoice, invoiceBalance, PrintButton } from "@/features/invoices";
 import { t } from "@/i18n";
 import { tenantHref } from "@/lib/href";
 import { requireTenantPermission } from "@/server/auth/session";
@@ -61,7 +61,7 @@ export default async function PrintInvoicePage({
             <p className="text-xs font-medium text-muted-foreground uppercase">{t("invoices.billTo")}</p>
             <p className="font-medium">{client.name}</p>
             {client.address ? <p className="whitespace-pre-line">{client.address}</p> : null}
-            {client.email ? <p>{client.email}</p> : null}
+            {client.billingEmail || client.email ? <p>{client.billingEmail || client.email}</p> : null}
           </div>
           <dl className="grid content-start gap-1 text-sm sm:justify-items-end">
             <div className="flex gap-2">
@@ -79,14 +79,17 @@ export default async function PrintInvoicePage({
           items={inv.items}
           currency={inv.currency}
           locale={settings.locale}
-          pricesIncludeTax={settings.tax.pricesIncludeTax}
+          pricesIncludeTax={inv.pricesIncludeTax}
           taxName={settings.tax.name}
           totals={inv}
           extra={
-            inv.paidMinor > 0n
+            inv.status !== "void" && (inv.paidMinor > 0n || inv.writtenOffMinor > 0n)
               ? [
                   { label: t("invoices.paid"), amount: inv.paidMinor },
-                  { label: t("invoices.balance"), amount: inv.totalMinor - inv.paidMinor, strong: true },
+                  ...(inv.writtenOffMinor > 0n
+                    ? [{ label: t("invoices.writtenOff"), amount: inv.writtenOffMinor }]
+                    : []),
+                  { label: t("invoices.balance"), amount: invoiceBalance(inv), strong: true },
                 ]
               : []
           }

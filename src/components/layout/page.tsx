@@ -105,7 +105,7 @@ export function EmptyState({
         bare ? "py-6" : "surface border-dashed py-10",
       )}
     >
-      <span className="mb-1 grid size-12 place-items-center rounded-2xl bg-secondary text-secondary-foreground">
+      <span className="mb-1 grid size-12 animate-float place-items-center rounded-2xl bg-secondary text-secondary-foreground">
         <Icon className="size-5" aria-hidden="true" />
       </span>
       <p className="font-medium">{title}</p>
@@ -138,7 +138,7 @@ export function StatCard({
     return (
       <div
         className={cn(
-          "relative flex hover-lift items-center gap-4 overflow-hidden rounded-(--radius) p-5 shadow-surface",
+          "group/stat relative flex hover-lift items-center gap-4 overflow-hidden rounded-(--radius) p-5 shadow-surface",
           gradient === 1 && "bg-gradient-1",
           gradient === 2 && "bg-gradient-2",
           gradient === 3 && "bg-gradient-3",
@@ -146,11 +146,11 @@ export function StatCard({
         )}
       >
         <span
-          className="pointer-events-none absolute -top-8 -right-8 size-28 rounded-full bg-current/10"
+          className="pointer-events-none absolute -top-8 -right-8 size-28 rounded-full bg-current/10 transition-transform duration-700 ease-out group-hover/stat:scale-150"
           aria-hidden="true"
         />
         {Icon ? (
-          <span className="grid size-12 shrink-0 place-items-center rounded-xl bg-current/15">
+          <span className="grid size-12 shrink-0 place-items-center rounded-xl bg-current/15 transition-transform duration-300 group-hover/stat:scale-110 group-hover/stat:-rotate-6">
             <Icon className="size-6" aria-hidden="true" />
           </span>
         ) : null}
@@ -163,11 +163,11 @@ export function StatCard({
     );
   }
   return (
-    <div className="flex hover-lift items-start gap-4 surface p-5">
+    <div className="group/stat flex hover-lift items-start gap-4 surface p-5">
       {Icon ? (
         <span
           className={cn(
-            "grid size-11 shrink-0 place-items-center rounded-xl bg-secondary text-secondary-foreground",
+            "grid size-11 shrink-0 place-items-center rounded-xl bg-secondary text-secondary-foreground transition-transform duration-300 group-hover/stat:scale-110 group-hover/stat:-rotate-6",
             tone === "positive" && "bg-success/12 text-success",
             tone === "negative" && "bg-destructive/10 text-destructive",
           )}
@@ -197,12 +197,12 @@ export function ListSkeleton({ rows = 6 }: { rows?: number }) {
   return (
     <div role="status" aria-label="Loading" className="grid gap-6">
       <div className="grid gap-2">
-        <span className="h-8 w-48 animate-pulse rounded-md bg-foreground/8" />
-        <span className="h-4 w-72 animate-pulse rounded bg-foreground/8" />
+        <span className="shimmer h-8 w-48 rounded-md bg-foreground/8" />
+        <span className="shimmer h-4 w-72 rounded bg-foreground/8" />
       </div>
       <div className="grid gap-3 surface p-5">
         {Array.from({ length: rows }, (_, i) => (
-          <span key={i} className="h-9 animate-pulse rounded-md bg-muted" />
+          <span key={i} className="shimmer h-9 rounded-md bg-muted" />
         ))}
       </div>
     </div>

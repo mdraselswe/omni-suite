@@ -19,9 +19,13 @@ export function ThemeToggle() {
       onClick={cycle}
       aria-label={label}
       title={label}
-      className="size-10 rounded-full header-control"
+      className="group/theme size-10 header-control rounded-full"
     >
-      <Icon aria-hidden="true" />
+      <Icon
+        key={mode}
+        className="animate-spin-in transition-transform duration-300 group-hover/theme:rotate-12"
+        aria-hidden="true"
+      />
     </Button>
   );
 }

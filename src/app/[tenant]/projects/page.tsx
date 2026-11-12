@@ -1,21 +1,22 @@
 import Link from "next/link";
 import { FilterBar, FilterSearch, FilterSelect, param } from "@/components/data/filter-bar";
 import { formatters } from "@/components/data/format";
+import { NoResults } from "@/components/data/no-results";
+import { Pagination } from "@/components/data/pagination";
 import { StatusBadge } from "@/components/data/status-badge";
 import { FormDialog } from "@/components/form/form-dialog";
 import { EmptyState, Section } from "@/components/layout/page";
-import { ButtonLink } from "@/components/ui/button-link";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { createProjectAction, listProjects, listProjectTemplates, ProjectFields } from "@/features/projects";
+import { createProjectAction, listProjectTemplates, pageProjects, ProjectFields } from "@/features/projects";
 import { t } from "@/i18n";
 import { tenantHref } from "@/lib/href";
+import { keepSize, parsePage } from "@/lib/pagination";
+import { normaliseSearch } from "@/lib/search";
 import { requireTenantPermission } from "@/server/auth/session";
 import { db } from "@/server/db";
 import { clientOptions } from "@/server/options";
 import { customFieldsFor } from "@/server/shared";
 import { hasPermission } from "@/server/tenancy/context";
-
-const PAGE = 50;
 
 export default async function ProjectsPage({ params, searchParams }: PageProps<"/[tenant]/projects">) {
   const { tenant } = await params;
@@ -26,22 +27,19 @@ export default async function ProjectsPage({ params, searchParams }: PageProps<"
   const statusOptions = statuses.map((s) => ({ value: s.key, label: s.label }));
   const status = statuses.some((s) => s.key === param(sp, "status")) ? param(sp, "status") : undefined;
   const clientId = /^[0-9a-f-]{36}$/.test(param(sp, "client")) ? param(sp, "client") : undefined;
-  const q = param(sp, "q").trim() || undefined;
-  const limit = Math.min(Number(param(sp, "limit")) || PAGE, 1000);
+  const q = normaliseSearch(param(sp, "q"));
+  const page = parsePage(sp);
+  const path = tenantHref(tenant, "projects");
   const canWrite = hasPermission(ctx, "projects.write");
   const database = db();
 
-  const [rows, clients, templates, customFields] = await Promise.all([
-    listProjects(database, ctx, scope, { status, clientId, q, limit: limit + 1 }),
+  const [found, clients, templates, customFields] = await Promise.all([
+    pageProjects(database, ctx, scope, { status, clientId, q }, page),
     clientOptions(database, ctx.tenant.id),
     canWrite ? listProjectTemplates(database, ctx.tenant.id) : Promise.resolve([]),
     canWrite ? customFieldsFor(database, ctx.tenant.id, "project") : Promise.resolve([]),
   ]);
-  const hasMore = rows.length > limit;
-  const projects = rows.slice(0, limit);
-  const next = new URLSearchParams();
-  for (const [k, v] of Object.entries({ status, client: clientId, q })) if (v) next.set(k, v);
-  next.set("limit", String(limit + PAGE));
+  const projects = found.rows;
   const doneKeys = new Set(statuses.filter((s) => s.done).map((s) => s.key));
   const labelOf = (key: string) => statuses.find((s) => s.key === key)?.label ?? key;
 
@@ -76,14 +74,18 @@ export default async function ProjectsPage({ params, searchParams }: PageProps<"
         ) : null
       }
     >
-      <FilterBar>
+      <FilterBar keep={keepSize(page)}>
         <FilterSelect name="status" label={t("form.status")} value={status} options={statusOptions} />
         <FilterSelect name="client" label={t("projects.client")} value={clientId} options={clients} />
         <FilterSearch value={q} />
       </FilterBar>
 
       {projects.length === 0 ? (
-        <EmptyState title={t("projects.none")} />
+        q ? (
+          <NoResults q={q} path={path} searchParams={sp} />
+        ) : (
+          <EmptyState title={t("projects.none")} />
+        )
       ) : (
         <Table>
           <TableHeader>
@@ -139,15 +141,7 @@ export default async function ProjectsPage({ params, searchParams }: PageProps<"
           </TableBody>
         </Table>
       )}
-      {hasMore ? (
-        <ButtonLink
-          href={tenantHref(tenant, `projects?${next.toString()}`)}
-          variant="outline"
-          className="justify-self-center"
-        >
-          {t("list.loadMore")}
-        </ButtonLink>
-      ) : null}
+      <Pagination path={path} searchParams={sp} request={page} paged={found} locale={f.locale} />
     </Section>
   );
 }

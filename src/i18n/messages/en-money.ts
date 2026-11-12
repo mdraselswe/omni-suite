@@ -96,7 +96,7 @@ export const enMoney = {
   "finance.periodRange": "The end date must be after the start date.",
   "finance.accountMissing": "Account not found.",
   "finance.transferTarget": "Choose a different account to transfer to.",
-  "finance.transferCurrency": "Transfers must be between accounts in the same currency.",
+  "finance.transferCurrency": "These accounts use different currencies: enter the amount that arrived.",
   "finance.partnerMissing": "That partner isn't in this business.",
   "finance.clientMissing": "That client isn't in this business.",
   "finance.categoryMissing": "That category doesn't exist.",
@@ -110,13 +110,10 @@ export const enMoney = {
   "finance.totalExpense": "Total expenses",
   "finance.netProfit": "Net profit",
   "finance.export": "Export CSV",
-  "finance.gstCollected": "GST in income",
-  "finance.gstNote": "GST shown is the tax share of paid invoices in this range (cash basis estimate).",
   "finance.thisMonth": "This month",
   "finance.thisFy": "This financial year",
   "finance.lastMonth": "Last month",
   "finance.receipt": "Receipt",
-  "finance.loadMore": "Show more",
 
   // Partners
   "partners.title": "Partners & profit",
@@ -202,7 +199,8 @@ export const enMoney = {
   "rules.methodHint.weighted": "Part of the profit by capital, part by work (hours logged or agreed points).",
   "rules.reserve": "Keep in the business (reserve %)",
   "rules.fees": "Fixed monthly fee to a working partner (optional)",
-  "rules.feesHint": "Paid before the split, per distribution. Leave empty for none.",
+  "rules.feesHint":
+    "Paid before the split. A distribution pays it for each month it covers (part months by days). Leave empty for none.",
   "rules.capitalWeight": "Capital weight %",
   "rules.laborWeight": "Work weight %",
   "rules.laborSource": "Work measured by",

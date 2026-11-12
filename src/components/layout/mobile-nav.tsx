@@ -19,7 +19,7 @@ export function MobileNav({ items, brand }: { items: readonly ShellNavItem[]; br
           <Button
             variant="ghost"
             size="icon"
-            className="size-10 rounded-full header-control md:hidden"
+            className="size-10 header-control rounded-full md:hidden"
             aria-label={t("nav.menu")}
           />
         }

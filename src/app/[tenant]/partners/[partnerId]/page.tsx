@@ -117,7 +117,8 @@ export default async function PartnerPage({ params }: PageProps<"/[tenant]/partn
                 key: `d-${d.id}`,
                 date: d.date,
                 label: `${t("partners.drawings")}${d.description ? ` · ${d.description}` : ""}`,
-                amount: d.reversesId ? d.amountMinor : -d.amountMinor,
+                // Base currency, like the totals (a drawing from a BDT account counts at its rate).
+                amount: d.reversesId ? d.baseAmountMinor : -d.baseAmountMinor,
               })),
             ]
               .sort((a, b) => (a.date < b.date ? 1 : -1))

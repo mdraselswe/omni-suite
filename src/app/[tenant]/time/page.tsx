@@ -1,15 +1,20 @@
-import { FilterBar, FilterDate, FilterSelect, param } from "@/components/data/filter-bar";
+import { FilterBar, FilterDate, FilterSearch, FilterSelect, param } from "@/components/data/filter-bar";
 import { formatters } from "@/components/data/format";
+import { NoResults } from "@/components/data/no-results";
+import { Pagination } from "@/components/data/pagination";
 import { ActionButton } from "@/components/form/action-button";
 import { CheckboxField, SelectField, TextField } from "@/components/form/field";
 import { FormDialog } from "@/components/form/form-dialog";
 import { EmptyState, PageHeader, Section, StatCard } from "@/components/layout/page";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { deleteTimeAction, listRates, listTime, logTimeAction, setRateAction } from "@/features/projects";
+import { deleteTimeAction, listRates, logTimeAction, pageTime, setRateAction } from "@/features/projects";
 import { t } from "@/i18n";
 import { isIsoDate, monthStart, today } from "@/lib/dates";
+import { tenantHref } from "@/lib/href";
 import { toDecimalString } from "@/lib/money";
+import { keepSize, parsePage } from "@/lib/pagination";
+import { normaliseSearch } from "@/lib/search";
 import { requireTenantPermission } from "@/server/auth/session";
 import { db } from "@/server/db";
 import { memberOptions, projectOptions } from "@/server/options";
@@ -27,23 +32,23 @@ export default async function TimePage({ params, searchParams }: PageProps<"/[te
   const to = isIsoDate(param(sp, "to")) ? param(sp, "to") : now;
   const projectId = UUID.test(param(sp, "project")) ? param(sp, "project") : undefined;
   const membershipId = scope === "all" && UUID.test(param(sp, "member")) ? param(sp, "member") : undefined;
+  const q = normaliseSearch(param(sp, "q"));
+  const page = parsePage(sp);
+  const path = tenantHref(tenant, "time");
   const writeScope = ctx.permissions.get("time.write");
   const canRates = hasPermission(ctx, "members.manage", "all");
   const database = db();
   const currency = ctx.tenant.settings.currency;
 
-  const [entries, projects, members, rates] = await Promise.all([
-    listTime(database, ctx, scope, { from, to, projectId, membershipId }),
+  const [found, projects, members, rates] = await Promise.all([
+    pageTime(database, ctx, scope, { from, to, projectId, membershipId, q }, page),
     projectOptions(database, ctx.tenant.id),
     memberOptions(database, ctx.tenant.id),
     canRates ? listRates(database, ctx.tenant.id) : Promise.resolve([]),
   ]);
-  const total = entries.reduce((s, e) => s + e.entry.minutes, 0);
-  const billable = entries.reduce((s, e) => s + (e.entry.billable ? e.entry.minutes : 0), 0);
-  const unbilled = entries.reduce(
-    (s, e) => s + (e.entry.billable && !e.entry.invoiceId ? e.entry.minutes : 0),
-    0,
-  );
+  const entries = found.rows;
+  // Totals cover every entry the filters match, not just this page.
+  const { minutes: total, billable, unbilled } = found.totals;
 
   return (
     <div className="grid gap-8">
@@ -86,23 +91,28 @@ export default async function TimePage({ params, searchParams }: PageProps<"/[te
         <StatCard
           label={t("time.total")}
           value={f.minutes(total)}
-          hint={t("time.entries", { count: entries.length })}
+          hint={t("time.entries", { count: new Intl.NumberFormat(f.locale).format(found.total) })}
         />
         <StatCard label={t("time.billableTotal")} value={f.minutes(billable)} />
         <StatCard label={t("time.unbilled")} value={f.minutes(unbilled)} />
       </div>
 
       <Section title={t("time.title")}>
-        <FilterBar>
+        <FilterBar keep={keepSize(page)}>
           <FilterDate name="from" label={t("finance.from")} value={from} />
           <FilterDate name="to" label={t("finance.to")} value={to} />
           <FilterSelect name="project" label={t("time.project")} value={projectId} options={projects} />
           {scope === "all" ? (
             <FilterSelect name="member" label={t("time.member")} value={membershipId} options={members} />
           ) : null}
+          <FilterSearch value={q} />
         </FilterBar>
         {entries.length === 0 ? (
-          <EmptyState title={t("time.none")} />
+          q ? (
+            <NoResults q={q} path={path} searchParams={sp} />
+          ) : (
+            <EmptyState title={t("time.none")} />
+          )
         ) : (
           <Table>
             <TableHeader>
@@ -155,6 +165,7 @@ export default async function TimePage({ params, searchParams }: PageProps<"/[te
             </TableBody>
           </Table>
         )}
+        <Pagination path={path} searchParams={sp} request={page} paged={found} locale={f.locale} />
       </Section>
 
       {canRates ? (

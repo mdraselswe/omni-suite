@@ -8,7 +8,7 @@ import { CheckboxField, SelectField, TextAreaField, TextField } from "@/componen
 import { FormDialog } from "@/components/form/form-dialog";
 import { EmptyState, Section, StatCard } from "@/components/layout/page";
 import { Badge } from "@/components/ui/badge";
-import { formatBytes, listFiles, uploadFileAction, deleteFileAction } from "@/features/files";
+import { formatBytes, listFiles, UploadFileDialog, deleteFileAction } from "@/features/files";
 import {
   addCommentAction,
   createTaskAction,
@@ -413,17 +413,17 @@ export default async function ProjectPage({ params }: PageProps<"/[tenant]/proje
             title={t("files.title")}
             actions={
               canUpload ? (
-                <FormDialog
+                <UploadFileDialog
+                  tenant={tenant}
                   trigger={t("projects.uploadFile")}
                   title={t("files.upload")}
-                  action={uploadFileAction.bind(null, tenant)}
                   variant="outline"
                 >
                   <input type="hidden" name="entityType" value="project" />
                   <input type="hidden" name="entityId" value={project.id} />
                   <TextField name="file" label={t("files.file")} type="file" required />
                   <CheckboxField name="clientVisible" label={t("files.clientVisible")} />
-                </FormDialog>
+                </UploadFileDialog>
               ) : null
             }
           >

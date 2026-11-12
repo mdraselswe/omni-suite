@@ -1,6 +1,7 @@
+import { BarChart } from "@/components/data/bar-chart";
 import { FilterBar, FilterDate, param } from "@/components/data/filter-bar";
 import { formatters } from "@/components/data/format";
-import { Section, StatCard } from "@/components/layout/page";
+import { Panel, Section, StatCard } from "@/components/layout/page";
 import { ButtonAnchor } from "@/components/ui/button-link";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { monthlyTotals, profitAndLoss } from "@/features/finance";
@@ -26,6 +27,7 @@ export default async function ReportPage({ params, searchParams }: PageProps<"/[
     monthlyTotals(db(), ctx.tenant.id, from, to),
     gstSummary(db(), ctx.tenant.id, from, to),
   ]);
+  const taxName = ctx.tenant.settings.tax.name;
   const income = pnl.lines.filter((l) => l.kind === "income");
   const expense = pnl.lines.filter((l) => l.kind === "expense");
   const csv = `/api/t/${tenant}/export/transactions.csv?from=${from}&to=${to}`;
@@ -45,11 +47,61 @@ export default async function ReportPage({ params, searchParams }: PageProps<"/[
           tone={pnl.profitMinor < 0n ? "negative" : "positive"}
         />
         <StatCard
-          label={`${ctx.tenant.settings.tax.name} · ${t("finance.gstCollected")}`}
-          value={f.money(gst.taxMinor)}
-          hint={t("finance.gstNote")}
+          label={t("finance.taxNet", { tax: taxName })}
+          value={f.money(gst.netTaxMinor)}
+          hint={t(gst.netTaxMinor < 0n ? "finance.taxRefund" : "finance.taxOwed")}
+          tone={gst.netTaxMinor < 0n ? "positive" : "default"}
         />
       </div>
+
+      <Panel
+        title={t("finance.basTitle", { tax: taxName })}
+        description={t("finance.basSub", { tax: taxName })}
+      >
+        <dl className="grid gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
+          {[
+            { code: "G1", label: t("finance.basSales"), value: gst.salesMinor },
+            { code: "1A", label: t("finance.basSalesTax", { tax: taxName }), value: gst.salesTaxMinor },
+            { code: "", label: t("finance.basPurchases"), value: gst.purchasesMinor },
+            { code: "1B", label: t("finance.basPurchaseTax", { tax: taxName }), value: gst.purchaseTaxMinor },
+          ].map((row) => (
+            <div key={row.label} className="flex items-baseline justify-between gap-3 border-b pb-2">
+              <dt className="text-muted-foreground">
+                {row.code ? <span className="mr-2 font-mono text-xs text-foreground">{row.code}</span> : null}
+                {row.label}
+              </dt>
+              <dd className="font-medium tabular-nums">{f.money(row.value)}</dd>
+            </div>
+          ))}
+        </dl>
+        <p className="mt-4 text-xs text-muted-foreground">
+          {t("finance.basAccrual", { tax: taxName, amount: f.money(gst.accrualTaxMinor) })}
+        </p>
+      </Panel>
+
+      {months.length > 0 ? (
+        <Panel title={t("finance.byMonth")}>
+          <BarChart
+            caption={t("finance.byMonth")}
+            labels={months.map((m) => formatMonth(`${m.month}-01`, f.locale, false))}
+            tableLabels={months.map((m) => formatMonth(`${m.month}-01`, f.locale))}
+            series={[
+              {
+                name: t("finance.totalIncome"),
+                color: 1,
+                values: months.map((m) => f.major(m.incomeMinor)),
+                formatted: months.map((m) => f.money(m.incomeMinor)),
+              },
+              {
+                name: t("finance.totalExpense"),
+                color: 2,
+                values: months.map((m) => f.major(m.expenseMinor)),
+                formatted: months.map((m) => f.money(m.expenseMinor)),
+              },
+            ]}
+          />
+        </Panel>
+      ) : null}
 
       <Section
         title={t("finance.report")}

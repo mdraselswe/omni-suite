@@ -44,7 +44,7 @@ export function UserMenu({
         render={
           <Button
             variant="ghost"
-            className="size-10 rounded-full header-control p-0"
+            className="size-10 header-control rounded-full p-0"
             aria-label={`${t("shell.account")}: ${user.name}`}
           />
         }

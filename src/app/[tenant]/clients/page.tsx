@@ -1,44 +1,42 @@
 import Link from "next/link";
 import { FilterBar, FilterSearch, FilterSelect, param } from "@/components/data/filter-bar";
 import { formatters } from "@/components/data/format";
+import { NoResults } from "@/components/data/no-results";
+import { Pagination } from "@/components/data/pagination";
 import { StatusBadge } from "@/components/data/status-badge";
 import { CustomFieldInputs } from "@/components/form/custom-field-inputs";
 import { Field, TextAreaField, TextField } from "@/components/form/field";
 import { FormDialog } from "@/components/form/form-dialog";
 import { EmptyState, Section } from "@/components/layout/page";
-import { ButtonLink } from "@/components/ui/button-link";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { createClientAction, importClientsAction, listClients } from "@/features/clients";
+import { createClientAction, importClientsAction, pageClients } from "@/features/clients";
 import { t } from "@/i18n";
 import { tenantHref } from "@/lib/href";
+import { keepSize, parsePage } from "@/lib/pagination";
+import { normaliseSearch } from "@/lib/search";
 import { requireTenantPermission } from "@/server/auth/session";
 import { db } from "@/server/db";
 import { customFieldsFor } from "@/server/shared";
 import { hasPermission } from "@/server/tenancy/context";
-
-const PAGE = 50;
 
 export default async function ClientsPage({ params, searchParams }: PageProps<"/[tenant]/clients">) {
   const { tenant } = await params;
   const sp = await searchParams;
   const { ctx, scope } = await requireTenantPermission(tenant, "clients.read");
   const f = formatters(ctx);
-  const q = param(sp, "q") || undefined;
+  const q = normaliseSearch(param(sp, "q"));
   const statusParam = param(sp, "status");
   const status = statusParam === "active" || statusParam === "inactive" ? statusParam : undefined;
-  const limit = Math.min(Number(param(sp, "limit")) || PAGE, 1000);
+  const page = parsePage(sp);
+  const path = tenantHref(tenant, "clients");
   const canWrite = hasPermission(ctx, "clients.write");
   const database = db();
-  const [loaded, defs] = await Promise.all([
-    listClients(database, ctx, scope, { q, status, limit: limit + 1 }),
+  const [found, defs] = await Promise.all([
+    pageClients(database, ctx, scope, { q, status }, page),
     customFieldsFor(database, ctx.tenant.id, "client"),
   ]);
-  const hasMore = loaded.length > limit;
-  const rows = loaded.slice(0, limit);
-  const next = new URLSearchParams();
-  for (const [k, v] of Object.entries({ q, status })) if (v) next.set(k, v);
-  next.set("limit", String(limit + PAGE));
+  const rows = found.rows;
 
   return (
     <Section
@@ -69,6 +67,13 @@ export default async function ClientsPage({ params, searchParams }: PageProps<"/
               <div className="grid gap-4 sm:grid-cols-2">
                 <TextField name="email" label={t("form.email.label")} type="email" />
                 <TextField name="phone" label={t("form.phone")} type="tel" />
+                <TextField name="contactName" label={t("clients.contactName")} />
+                <TextField
+                  name="billingEmail"
+                  label={t("clients.billingEmail")}
+                  hint={t("clients.billingEmailHint")}
+                  type="email"
+                />
               </div>
               <TextField name="website" label={t("clients.website")} type="url" placeholder="https://" />
               <TextAreaField name="address" label={t("clients.address")} rows={2} />
@@ -79,7 +84,7 @@ export default async function ClientsPage({ params, searchParams }: PageProps<"/
         ) : null
       }
     >
-      <FilterBar>
+      <FilterBar keep={keepSize(page)}>
         <FilterSelect
           name="status"
           label={t("form.status")}
@@ -93,7 +98,11 @@ export default async function ClientsPage({ params, searchParams }: PageProps<"/
       </FilterBar>
 
       {rows.length === 0 ? (
-        <EmptyState title={t("clients.none")} body={t("clients.noneBody")} />
+        q ? (
+          <NoResults q={q} path={path} searchParams={sp} />
+        ) : (
+          <EmptyState title={t("clients.none")} body={t("clients.noneBody")} />
+        )
       ) : (
         <Table>
           <TableHeader>
@@ -127,15 +136,7 @@ export default async function ClientsPage({ params, searchParams }: PageProps<"/
           </TableBody>
         </Table>
       )}
-      {hasMore ? (
-        <ButtonLink
-          href={tenantHref(tenant, `clients?${next.toString()}`)}
-          variant="outline"
-          className="justify-self-center"
-        >
-          {t("list.loadMore")}
-        </ButtonLink>
-      ) : null}
+      <Pagination path={path} searchParams={sp} request={page} paged={found} locale={f.locale} />
     </Section>
   );
 }

@@ -1,21 +1,31 @@
 import Link from "next/link";
 import { FilterBar, FilterSearch, FilterSelect, param } from "@/components/data/filter-bar";
 import { formatters } from "@/components/data/format";
+import { NoResults } from "@/components/data/no-results";
+import { Pagination } from "@/components/data/pagination";
 import { StatusBadge } from "@/components/data/status-badge";
 import { EmptyState, Section, StatCard } from "@/components/layout/page";
 import { ButtonLink } from "@/components/ui/button-link";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { displayStatus, listInvoices, receivables, type InvoiceStatus } from "@/features/invoices";
+import {
+  countInvoices,
+  displayStatus,
+  invoiceBalance,
+  pageInvoices,
+  receivables,
+  type InvoiceStatus,
+} from "@/features/invoices";
 import { t } from "@/i18n";
 import { today } from "@/lib/dates";
 import { tenantHref } from "@/lib/href";
+import { keepSize, parsePage } from "@/lib/pagination";
+import { normaliseSearch } from "@/lib/search";
 import { requireTenantPermission } from "@/server/auth/session";
 import { db } from "@/server/db";
 import { clientOptions } from "@/server/options";
 import { hasPermission } from "@/server/tenancy/context";
 
 const STATUSES = ["draft", "sent", "partially_paid", "overdue", "paid", "void"] as const;
-const PAGE = 100;
 
 export default async function InvoicesPage({ params, searchParams }: PageProps<"/[tenant]/invoices">) {
   const { tenant } = await params;
@@ -27,20 +37,17 @@ export default async function InvoicesPage({ params, searchParams }: PageProps<"
   const status: InvoiceStatus | "overdue" | undefined = STATUSES.find((s) => s === statusParam);
   const clientParam = param(sp, "client");
   const clientId = /^[0-9a-f-]{36}$/.test(clientParam) ? clientParam : undefined;
-  const q = param(sp, "q") || undefined;
-  const limit = Math.min(Number(param(sp, "limit")) || PAGE, 2000);
+  const q = normaliseSearch(param(sp, "q"));
+  const page = parsePage(sp);
+  const path = tenantHref(tenant, "invoices");
   const database = db();
-  const [found, owed, clients] = await Promise.all([
-    listInvoices(database, ctx.tenant.id, { status, clientId, q, today: now, limit: limit + 1 }),
-    receivables(database, ctx.tenant.id, now),
+  const [found, owed, clients, drafts] = await Promise.all([
+    pageInvoices(database, ctx.tenant.id, { status, clientId, q, today: now }, page),
+    receivables(database, ctx.tenant.id, now, ctx.tenant.settings.currency),
     clientOptions(database, ctx.tenant.id),
+    countInvoices(database, ctx.tenant.id, { status: "draft" }),
   ]);
-  const hasMore = found.length > limit;
-  const rows = found.slice(0, limit);
-  const next = new URLSearchParams();
-  for (const [k, v] of Object.entries({ status, client: clientId, q })) if (v) next.set(k, v);
-  next.set("limit", String(limit + PAGE));
-  const drafts = rows.filter((r) => r.invoice.status === "draft").length;
+  const rows = found.rows;
 
   return (
     <div className="grid gap-8">
@@ -51,7 +58,11 @@ export default async function InvoicesPage({ params, searchParams }: PageProps<"
           value={f.money(owed.overdueMinor)}
           tone={owed.overdueMinor > 0n ? "negative" : "default"}
         />
-        <StatCard label={t("invoices.status.draft")} value={String(drafts)} hint={t("invoices.inList")} />
+        <StatCard
+          label={t("invoices.status.draft")}
+          value={new Intl.NumberFormat(f.locale).format(drafts)}
+          hint={t("invoices.draftsHint")}
+        />
       </div>
 
       <Section
@@ -62,7 +73,7 @@ export default async function InvoicesPage({ params, searchParams }: PageProps<"
           ) : null
         }
       >
-        <FilterBar>
+        <FilterBar keep={keepSize(page)}>
           <FilterSelect
             name="status"
             label={t("form.status")}
@@ -74,7 +85,11 @@ export default async function InvoicesPage({ params, searchParams }: PageProps<"
         </FilterBar>
 
         {rows.length === 0 ? (
-          <EmptyState title={t("invoices.none")} />
+          q ? (
+            <NoResults q={q} path={path} searchParams={sp} />
+          ) : (
+            <EmptyState title={t("invoices.none")} />
+          )
         ) : (
           <Table>
             <TableHeader>
@@ -91,7 +106,7 @@ export default async function InvoicesPage({ params, searchParams }: PageProps<"
             <TableBody>
               {rows.map(({ invoice: inv, clientName }) => {
                 const shown = displayStatus(inv, now);
-                const balance = inv.status === "void" ? 0n : inv.totalMinor - inv.paidMinor;
+                const balance = invoiceBalance(inv);
                 return (
                   <TableRow key={inv.id}>
                     <TableCell className="whitespace-nowrap">
@@ -124,15 +139,7 @@ export default async function InvoicesPage({ params, searchParams }: PageProps<"
             </TableBody>
           </Table>
         )}
-        {hasMore ? (
-          <ButtonLink
-            href={tenantHref(tenant, `invoices?${next.toString()}`)}
-            variant="outline"
-            className="justify-self-center"
-          >
-            {t("finance.loadMore")}
-          </ButtonLink>
-        ) : null}
+        <Pagination path={path} searchParams={sp} request={page} paged={found} locale={f.locale} />
       </Section>
     </div>
   );

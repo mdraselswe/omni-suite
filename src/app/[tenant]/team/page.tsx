@@ -1,46 +1,52 @@
 import Link from "next/link";
+import { FilterBar, FilterSearch, param } from "@/components/data/filter-bar";
 import { formatters } from "@/components/data/format";
+import { NoResults } from "@/components/data/no-results";
+import { Pagination } from "@/components/data/pagination";
 import { StatusBadge } from "@/components/data/status-badge";
-import { ActionButton } from "@/components/form/action-button";
 import { FormDialog } from "@/components/form/form-dialog";
 import { EmptyState, Section } from "@/components/layout/page";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
-  CopyLinkButton,
   InviteFields,
   inviteAction,
-  listMembers,
   listRoles,
+  pageMembers,
+  PendingInvitationList,
   pendingInvitations,
-  revokeInvitationAction,
   type Member,
 } from "@/features/team";
 import { t } from "@/i18n";
 import { tenantHref } from "@/lib/href";
+import { keepSize, parsePage } from "@/lib/pagination";
+import { normaliseSearch } from "@/lib/search";
 import { requireTenantPermission } from "@/server/auth/session";
 import { db } from "@/server/db";
-import { appUrl } from "@/server/mail";
 import { clientOptions } from "@/server/options";
 import { hasPermission } from "@/server/tenancy/context";
 
-export default async function TeamPage({ params }: PageProps<"/[tenant]/team">) {
+export default async function TeamPage({ params, searchParams }: PageProps<"/[tenant]/team">) {
   const { tenant } = await params;
+  const sp = await searchParams;
   const { ctx } = await requireTenantPermission(tenant, "members.read");
   const f = formatters(ctx);
   const canInvite = hasPermission(ctx, "members.invite");
   const canManage = hasPermission(ctx, "members.manage");
+  const q = normaliseSearch(param(sp, "q"));
+  // Two lists on one page: team (page, size) and client portal users (cpage, csize).
+  const teamPage = parsePage(sp);
+  const portalPage = parsePage(sp, { prefix: "c" });
+  const path = tenantHref(tenant, "team");
   const database = db();
-  const [members, roles, invitations, clients] = await Promise.all([
-    listMembers(database, ctx.tenant.id),
+  const [internal, portal, roles, invitations, clients] = await Promise.all([
+    pageMembers(database, ctx.tenant.id, { kind: "internal", q }, teamPage),
+    pageMembers(database, ctx.tenant.id, { kind: "client", q }, portalPage),
     canInvite ? listRoles(database, ctx.tenant.id) : Promise.resolve([]),
     canInvite ? pendingInvitations(database, ctx.tenant.id) : Promise.resolve([]),
     clientOptions(database, ctx.tenant.id),
   ]);
   const clientName = new Map(clients.map((c) => [c.value, c.label]));
-  const internal = members.filter((m) => m.kind === "internal");
-  const portal = members.filter((m) => m.kind === "client");
 
   const table = (rows: Member[]) => (
     <Table>
@@ -129,62 +135,57 @@ export default async function TeamPage({ params }: PageProps<"/[tenant]/team">) 
           ) : null
         }
       >
-        {internal.length === 0 ? <EmptyState title={t("team.noAccess")} /> : table(internal)}
+        <FilterBar keep={{ ...keepSize(teamPage), ...keepSize(portalPage) }}>
+          <FilterSearch value={q} />
+        </FilterBar>
+        {internal.rows.length === 0 ? (
+          q ? (
+            <NoResults q={q} path={path} searchParams={sp} />
+          ) : (
+            <EmptyState title={t("team.noAccess")} />
+          )
+        ) : (
+          table(internal.rows)
+        )}
+        <Pagination
+          path={path}
+          searchParams={sp}
+          request={teamPage}
+          paged={internal}
+          locale={f.locale}
+          label={t("team.members")}
+        />
       </Section>
 
       <Section title={t("team.clients")}>
-        {portal.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{t("clients.noPortalUsers")}</p>
+        {portal.rows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            {q ? t("list.noResults", { q }) : t("clients.noPortalUsers")}
+          </p>
         ) : (
-          table(portal)
+          table(portal.rows)
         )}
+        <Pagination
+          path={path}
+          searchParams={sp}
+          request={portalPage}
+          paged={portal}
+          locale={f.locale}
+          label={t("team.clients")}
+        />
       </Section>
 
       {canInvite ? (
-        <Section title={t("team.invitations")}>
+        <Section title={t("team.invitations")} description={t("access.team.invitationsSub")}>
           {invitations.length === 0 ? (
             <p className="text-sm text-muted-foreground">{t("team.noInvitations")}</p>
           ) : (
-            <ul className="grid gap-2">
-              {invitations.map((inv) => {
-                const link = appUrl(`/invite/${inv.token}`);
-                return (
-                  <li key={inv.id} className="grid gap-2 rounded-lg border p-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex min-w-0 flex-wrap items-center gap-2">
-                        <span className="font-medium break-all">{inv.email}</span>
-                        <Badge variant="outline">{t(`team.kind.${inv.kind}`)}</Badge>
-                        <span className="text-xs text-muted-foreground">
-                          {t("team.expiresOn", { date: f.date(inv.expiresAt.toISOString().slice(0, 10)) })}
-                        </span>
-                      </div>
-                      <ActionButton
-                        action={revokeInvitationAction.bind(null, tenant)}
-                        values={{ id: inv.id }}
-                        confirm={t("form.confirm")}
-                        variant="ghost"
-                      >
-                        {t("team.revoke")}
-                      </ActionButton>
-                    </div>
-                    <div className="grid gap-1">
-                      <label htmlFor={`invite-${inv.id}`} className="text-xs text-muted-foreground">
-                        {t("team.inviteLink")}
-                      </label>
-                      <div className="flex gap-2">
-                        <Input
-                          id={`invite-${inv.id}`}
-                          readOnly
-                          value={link}
-                          className="min-w-0 flex-1 font-mono text-xs"
-                        />
-                        <CopyLinkButton value={link} />
-                      </div>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
+            <PendingInvitationList
+              tenant={tenant}
+              invitations={invitations}
+              formatDate={f.date}
+              clientNames={clientName}
+            />
           )}
         </Section>
       ) : null}

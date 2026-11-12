@@ -1,5 +1,8 @@
 import Link from "next/link";
+import { FilterBar, FilterSearch, param } from "@/components/data/filter-bar";
 import { formatters } from "@/components/data/format";
+import { NoResults } from "@/components/data/no-results";
+import { Pagination } from "@/components/data/pagination";
 import { StatusBadge } from "@/components/data/status-badge";
 import { ActionButton } from "@/components/form/action-button";
 import { CheckboxField, SelectField, TextField } from "@/components/form/field";
@@ -8,10 +11,11 @@ import { LineItemsEditor } from "@/components/form/line-items-editor";
 import { EmptyState, Section, StatCard } from "@/components/layout/page";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
+  activeRecurringCount,
   createRecurringAction,
   deleteRecurringAction,
-  listRecurring,
   monthlyRecurring,
+  pageRecurring,
   toggleRecurringAction,
   updateRecurringAction,
 } from "@/features/invoices";
@@ -19,31 +23,44 @@ import { t } from "@/i18n";
 import { addDays, today } from "@/lib/dates";
 import { tenantHref } from "@/lib/href";
 import { computeTotals, type LineItem } from "@/lib/line-items";
+import { keepSize, parsePage } from "@/lib/pagination";
+import { normaliseSearch } from "@/lib/search";
 import type { TenantSettings } from "@/lib/tenant-settings";
 import { requireTenantPermission } from "@/server/auth/session";
 import { db } from "@/server/db";
 import { clientOptions } from "@/server/options";
 import { hasPermission } from "@/server/tenancy/context";
 
-export default async function RecurringInvoicesPage({ params }: PageProps<"/[tenant]/invoices/recurring">) {
+export default async function RecurringInvoicesPage({
+  params,
+  searchParams,
+}: PageProps<"/[tenant]/invoices/recurring">) {
   const { tenant } = await params;
+  const sp = await searchParams;
   const { ctx } = await requireTenantPermission(tenant, "invoices.read");
   const f = formatters(ctx);
   const settings = ctx.tenant.settings;
   const canWrite = hasPermission(ctx, "invoices.write");
+  const q = normaliseSearch(param(sp, "q"));
+  const page = parsePage(sp);
+  const path = tenantHref(tenant, "invoices/recurring");
   const database = db();
-  const [rows, mrr, clients] = await Promise.all([
-    listRecurring(database, ctx.tenant.id),
+  const [found, active, mrr, clients] = await Promise.all([
+    pageRecurring(database, ctx.tenant.id, { q }, page),
+    activeRecurringCount(database, ctx.tenant.id),
     monthlyRecurring(database, ctx),
     canWrite ? clientOptions(database, ctx.tenant.id) : Promise.resolve([]),
   ]);
-  const active = rows.filter((r) => r.r.active).length;
+  const rows = found.rows;
 
   return (
     <div className="grid gap-8">
       <div className="grid gap-3 sm:grid-cols-2">
         <StatCard label={t("dash.mrr")} value={f.money(mrr)} hint={t("dash.mrrHint")} />
-        <StatCard label={t("invoices.activeSchedules")} value={String(active)} />
+        <StatCard
+          label={t("invoices.activeSchedules")}
+          value={new Intl.NumberFormat(f.locale).format(active)}
+        />
       </div>
 
       <Section
@@ -62,8 +79,15 @@ export default async function RecurringInvoicesPage({ params }: PageProps<"/[ten
           ) : null
         }
       >
+        <FilterBar keep={keepSize(page)}>
+          <FilterSearch value={q} />
+        </FilterBar>
         {rows.length === 0 ? (
-          <EmptyState title={t("invoices.noRecurring")} />
+          q ? (
+            <NoResults q={q} path={path} searchParams={sp} />
+          ) : (
+            <EmptyState title={t("invoices.noRecurring")} />
+          )
         ) : (
           <Table>
             <TableHeader>
@@ -144,6 +168,7 @@ export default async function RecurringInvoicesPage({ params }: PageProps<"/[ten
             </TableBody>
           </Table>
         )}
+        <Pagination path={path} searchParams={sp} request={page} paged={found} locale={f.locale} />
       </Section>
     </div>
   );

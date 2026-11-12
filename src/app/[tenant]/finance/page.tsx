@@ -1,29 +1,34 @@
+import { Paperclip } from "lucide-react";
 import { FilterBar, FilterDate, FilterSearch, FilterSelect, param } from "@/components/data/filter-bar";
 import { formatters } from "@/components/data/format";
+import { NoResults } from "@/components/data/no-results";
+import { Pagination } from "@/components/data/pagination";
 import { TextField } from "@/components/form/field";
 import { FormDialog } from "@/components/form/form-dialog";
 import { EmptyState, Section, StatCard } from "@/components/layout/page";
 import { Badge } from "@/components/ui/badge";
-import { ButtonLink } from "@/components/ui/button-link";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   createTransactionAction,
   listAccounts,
-  listTransactions,
+  pageTransactions,
+  receiptsFor,
   reverseTransactionAction,
   TransactionFields,
+  transactionFx,
   TX_KINDS,
   type TxKind,
 } from "@/features/finance";
+import { UploadFileDialog } from "@/features/files";
 import { t } from "@/i18n";
 import { isIsoDate, today } from "@/lib/dates";
 import { tenantHref } from "@/lib/href";
+import { keepSize, parsePage } from "@/lib/pagination";
+import { normaliseSearch } from "@/lib/search";
 import { requireTenantPermission } from "@/server/auth/session";
 import { db } from "@/server/db";
 import { accountOptions, categoryOptions, clientOptions, partnerOptions } from "@/server/options";
 import { hasPermission } from "@/server/tenancy/context";
-
-const PAGE = 50;
 
 export default async function FinancePage({ params, searchParams }: PageProps<"/[tenant]/finance">) {
   const { tenant } = await params;
@@ -36,24 +41,32 @@ export default async function FinancePage({ params, searchParams }: PageProps<"/
     ? (param(sp, "kind") as TxKind)
     : undefined;
   const accountId = /^[0-9a-f-]{36}$/.test(param(sp, "account")) ? param(sp, "account") : undefined;
-  const q = param(sp, "q") || undefined;
-  const limit = Math.min(Number(param(sp, "limit")) || PAGE, 1000);
+  const q = normaliseSearch(param(sp, "q"));
+  const page = parsePage(sp);
+  const path = tenantHref(tenant, "finance");
   const canWrite = hasPermission(ctx, "finance.write");
   const database = db();
 
-  const [accounts, rows, accOpts, cats, partners, clients] = await Promise.all([
+  const [accounts, found, accOpts, cats, partners, clients] = await Promise.all([
     listAccounts(database, ctx.tenant.id),
-    listTransactions(database, ctx.tenant.id, { from, to, kind, accountId, q, limit: limit + 1 }),
+    pageTransactions(database, ctx.tenant.id, { from, to, kind, accountId, q }, page),
     accountOptions(database, ctx.tenant.id),
     categoryOptions(database, ctx.tenant.id),
     partnerOptions(database, ctx.tenant.id),
     clientOptions(database, ctx.tenant.id),
   ]);
-  const hasMore = rows.length > limit;
-  const visible = rows.slice(0, limit);
-  const next = new URLSearchParams();
-  for (const [k, v] of Object.entries({ from, to, kind, account: accountId, q })) if (v) next.set(k, v);
-  next.set("limit", String(limit + PAGE));
+  const visible = found.rows;
+  // Receipts: shown to members who can open files, attached by those who can add them.
+  const fileScope = ctx.permissions.get("files.read");
+  const canAttach = canWrite && ctx.permissions.has("files.write");
+  const receipts = fileScope
+    ? await receiptsFor(
+        database,
+        ctx.tenant.id,
+        visible.map((r) => r.tx.id),
+        fileScope === "all" ? undefined : ctx.user.id,
+      )
+    : new Map<string, { id: string; name: string }[]>();
 
   return (
     <div className="grid gap-8">
@@ -85,12 +98,13 @@ export default async function FinancePage({ params, searchParams }: PageProps<"/
                 partners={partners}
                 clients={clients}
                 today={today(ctx.tenant.settings.timezone)}
+                fx={transactionFx(ctx, tenant)}
               />
             </FormDialog>
           ) : null
         }
       >
-        <FilterBar>
+        <FilterBar keep={keepSize(page)}>
           <FilterDate name="from" label={t("finance.from")} value={from} />
           <FilterDate name="to" label={t("finance.to")} value={to} />
           <FilterSelect
@@ -104,7 +118,11 @@ export default async function FinancePage({ params, searchParams }: PageProps<"/
         </FilterBar>
 
         {visible.length === 0 ? (
-          <EmptyState title={t("finance.noTx")} body={t("finance.noTxBody")} />
+          q ? (
+            <NoResults q={q} path={path} searchParams={sp} />
+          ) : (
+            <EmptyState title={t("finance.noTx")} body={t("finance.noTxBody")} />
+          )
         ) : (
           <Table>
             <TableHeader>
@@ -132,6 +150,19 @@ export default async function FinancePage({ params, searchParams }: PageProps<"/
                         <span>{tx.description || t(`finance.kind.${tx.kind}`)}</span>
                         <Badge variant="outline">{t(`finance.kind.${tx.kind}`)}</Badge>
                         {tx.reversesId ? <Badge variant="secondary">{t("finance.reversal")}</Badge> : null}
+                        {receipts.get(tx.id)?.map((file) => (
+                          <a
+                            key={file.id}
+                            href={`/api/t/${encodeURIComponent(tenant)}/files/${file.id}?view`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex max-w-40 items-center gap-1 rounded-sm text-xs text-muted-foreground no-underline hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                            title={t("finance.receiptOpen", { name: file.name })}
+                          >
+                            <Paperclip className="size-3 shrink-0" aria-hidden />
+                            <span className="truncate">{file.name}</span>
+                          </a>
+                        ))}
                       </div>
                     </TableCell>
                     <TableCell className="hidden md:table-cell">{accountName}</TableCell>
@@ -141,7 +172,27 @@ export default async function FinancePage({ params, searchParams }: PageProps<"/
                       {f.money(tx.amountMinor, tx.currency)}
                     </TableCell>
                     {canWrite ? (
-                      <TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        {canAttach && !tx.reversesId && (tx.kind === "expense" || tx.kind === "income") ? (
+                          <UploadFileDialog
+                            tenant={tenant}
+                            trigger={t("finance.attachReceipt")}
+                            title={t("finance.attachReceipt")}
+                            description={t("finance.attachReceiptHint")}
+                            variant="ghost"
+                            icon={false}
+                          >
+                            <input type="hidden" name="entityType" value="transaction" />
+                            <input type="hidden" name="entityId" value={tx.id} />
+                            <TextField
+                              name="file"
+                              label={t("files.file")}
+                              type="file"
+                              accept="image/*,application/pdf"
+                              required
+                            />
+                          </UploadFileDialog>
+                        ) : null}
                         {!tx.reversedAt && !tx.reversesId ? (
                           <FormDialog
                             trigger={t("finance.reverse")}
@@ -163,15 +214,7 @@ export default async function FinancePage({ params, searchParams }: PageProps<"/
             </TableBody>
           </Table>
         )}
-        {hasMore ? (
-          <ButtonLink
-            href={tenantHref(tenant, `finance?${next.toString()}`)}
-            variant="outline"
-            className="justify-self-center"
-          >
-            {t("finance.loadMore")}
-          </ButtonLink>
-        ) : null}
+        <Pagination path={path} searchParams={sp} request={page} paged={found} locale={f.locale} />
       </Section>
     </div>
   );

@@ -21,10 +21,10 @@ export const enPayments = {
   "payments.testWarning": "Test mode: no real money moves. Switch to live keys when you're ready.",
   "payments.secretKey": "Stripe secret key",
   "payments.secretKeyHelp":
-    "Stripe Dashboard → Developers → API keys. A restricted key needs “Checkout Sessions: Write”. Starts with sk_ or rk_.",
+    "Stripe Dashboard → Developers → API keys. A restricted key needs “Checkout Sessions: Write” and read access to PaymentIntents, Charges and Balance transactions (for fees and refunds). Starts with sk_ or rk_.",
   "payments.webhookSecret": "Webhook signing secret",
   "payments.webhookSecretHelp":
-    "Stripe Dashboard → Developers → Webhooks → add the address below for the events checkout.session.completed and checkout.session.async_payment_succeeded, then copy its signing secret (whsec_…).",
+    "Stripe Dashboard → Developers → Webhooks → add the address below for the events checkout.session.completed, checkout.session.async_payment_succeeded and charge.refunded, then copy its signing secret (whsec_…).",
   "payments.keepSecret": "Saved. Leave blank to keep it.",
   "payments.webhookUrl": "Webhook address",
   "payments.account": "Deposit into",

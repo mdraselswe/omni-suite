@@ -4,8 +4,14 @@ import { enAi } from "./en-ai";
 import { enApp } from "./en-app";
 import { enCore } from "./en-core";
 import { enInfra } from "./en-infra";
+import { enLocale } from "./en-locale";
+import { enLedger } from "./en-ledger";
+import { enLists } from "./en-lists";
 import { enMoney } from "./en-money";
 import { enPayments } from "./en-payments";
+import { enPortalAccess } from "./en-portal-access";
+import { enPortalWork } from "./en-portal-work";
+import { enSecurity } from "./en-security";
 import { enUi1 } from "./en-ui-1";
 import { enUi2 } from "./en-ui-2";
 import { enUi3 } from "./en-ui-3";
@@ -33,6 +39,12 @@ export const en = {
   ...enInfra,
   ...enAccount,
   ...enWork2,
+  ...enLocale,
+  ...enLists,
+  ...enLedger,
+  ...enSecurity,
+  ...enPortalWork,
+  ...enPortalAccess,
   "a11y.skip": "Skip to content",
   "nav.home": "Home",
   "nav.about": "About",

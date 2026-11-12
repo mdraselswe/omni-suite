@@ -1,34 +1,38 @@
+import { FilterBar, FilterSearch, param } from "@/components/data/filter-bar";
 import { formatters } from "@/components/data/format";
-import { ActionForm, SubmitButton } from "@/components/form/action-form";
+import { NoResults } from "@/components/data/no-results";
+import { Pagination } from "@/components/data/pagination";
+import { SubmitButton } from "@/components/form/action-form";
 import { Field } from "@/components/form/field";
 import { EmptyState, PageHeader, Section } from "@/components/layout/page";
-import { ButtonAnchor, ButtonLink } from "@/components/ui/button-link";
+import { ButtonAnchor } from "@/components/ui/button-link";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { formatBytes, listFiles, uploadFileAction } from "@/features/files";
+import { formatBytes, pageFiles, UploadFileForm } from "@/features/files";
 import { listProjects } from "@/features/projects";
-import { param } from "@/components/data/filter-bar";
 import { t } from "@/i18n";
 import { tenantHref } from "@/lib/href";
+import { keepSize, parsePage } from "@/lib/pagination";
+import { normaliseSearch } from "@/lib/search";
 import { db } from "@/server/db";
 import { hasPermission } from "@/server/tenancy/context";
 import { portalPage } from "../_components/portal";
 import { UploadTarget } from "../_components/upload-target";
 
-const PAGE = 50;
-
 export default async function PortalFiles({ params, searchParams }: PageProps<"/[tenant]/portal/files">) {
   const { tenant } = await params;
-  const limit = Math.min(Number(param(await searchParams, "limit")) || PAGE, 1000);
+  const sp = await searchParams;
   const { ctx, clientId } = await portalPage(tenant, "portal.files");
   const f = formatters(ctx);
+  const q = normaliseSearch(param(sp, "q"));
+  const page = parsePage(sp);
+  const path = tenantHref(tenant, "portal/files");
   const database = db();
-  const [rows, projects] = await Promise.all([
-    listFiles(database, ctx, "all", { limit: limit + 1 }),
+  const [found, projects] = await Promise.all([
+    pageFiles(database, ctx, "all", { q }, page),
     hasPermission(ctx, "portal.projects") ? listProjects(database, ctx, "all") : Promise.resolve([]),
   ]);
-  const hasMore = rows.length > limit;
-  const files = rows.slice(0, limit);
+  const files = found.rows;
   const projectName = new Map(projects.map((p) => [p.id, p.name]));
 
   return (
@@ -36,7 +40,7 @@ export default async function PortalFiles({ params, searchParams }: PageProps<"/
       <PageHeader title={t("nav.portal.files")} description={t("portal.filesSub")} />
 
       <Section title={t("portal.uploadTitle")} description={t("portal.uploadHint")}>
-        <ActionForm action={uploadFileAction.bind(null, tenant)} className="surface p-4 sm:max-w-lg">
+        <UploadFileForm tenant={tenant} className="surface p-4 sm:max-w-lg">
           <UploadTarget
             clientId={clientId}
             projects={projects.map((p) => ({ value: p.id, label: p.name }))}
@@ -45,12 +49,19 @@ export default async function PortalFiles({ params, searchParams }: PageProps<"/
             <Input id="file" name="file" type="file" required aria-describedby="file-error" />
           </Field>
           <SubmitButton className="justify-self-start">{t("files.upload")}</SubmitButton>
-        </ActionForm>
+        </UploadFileForm>
       </Section>
 
       <Section title={t("files.title")}>
+        <FilterBar keep={keepSize(page)}>
+          <FilterSearch value={q} />
+        </FilterBar>
         {files.length === 0 ? (
-          <EmptyState title={t("files.none")} />
+          q ? (
+            <NoResults q={q} path={path} searchParams={sp} />
+          ) : (
+            <EmptyState title={t("files.none")} />
+          )
         ) : (
           <Table>
             <TableHeader>
@@ -85,15 +96,7 @@ export default async function PortalFiles({ params, searchParams }: PageProps<"/
             </TableBody>
           </Table>
         )}
-        {hasMore ? (
-          <ButtonLink
-            href={tenantHref(tenant, `portal/files?limit=${limit + PAGE}`)}
-            variant="outline"
-            className="justify-self-center"
-          >
-            {t("list.loadMore")}
-          </ButtonLink>
-        ) : null}
+        <Pagination path={path} searchParams={sp} request={page} paged={found} locale={f.locale} />
       </Section>
     </div>
   );

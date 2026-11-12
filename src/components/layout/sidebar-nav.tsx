@@ -56,14 +56,30 @@ export function SidebarNav({
                     aria-current={active ? "page" : undefined}
                     title={collapsed ? item.label : undefined}
                     className={cn(
-                      "flex h-10 items-center gap-3 text-sm text-sidebar-foreground transition-colors outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+                      "group/nav relative flex h-10 items-center gap-3 text-sm text-sidebar-foreground transition-colors duration-200 outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
                       collapsed ? "mx-auto w-10 justify-center rounded-xl" : "mr-4 rounded-r-full pl-6",
                       active &&
                         "bg-sidebar-primary font-medium text-sidebar-primary-foreground hover:bg-sidebar-primary hover:text-sidebar-primary-foreground",
                     )}
                   >
-                    <Icon className="size-[1.1rem] shrink-0" aria-hidden="true" />
-                    <span className={cn("truncate", collapsed && "sr-only")}>{item.label}</span>
+                    {active && !collapsed ? (
+                      <span
+                        className="absolute inset-y-2 left-0 w-1 animate-grow-y rounded-r-full bg-sidebar-primary-foreground"
+                        aria-hidden="true"
+                      />
+                    ) : null}
+                    <Icon
+                      className="size-[1.1rem] shrink-0 transition-transform duration-200 group-hover/nav:scale-115"
+                      aria-hidden="true"
+                    />
+                    <span
+                      className={cn(
+                        "truncate transition-transform duration-200 group-hover/nav:translate-x-0.5",
+                        collapsed && "sr-only",
+                      )}
+                    >
+                      {item.label}
+                    </span>
                   </Link>
                 </li>
               );

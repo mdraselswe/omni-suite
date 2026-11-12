@@ -1,12 +1,13 @@
+import type { Route } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { lists } from "@/config";
 import { formatters } from "@/components/data/format";
 import { StatusBadge } from "@/components/data/status-badge";
-import { ActionForm, SubmitButton } from "@/components/form/action-form";
 import { CustomFieldInputs, CustomFieldValues } from "@/components/form/custom-field-inputs";
-import { CheckboxField, SelectField, TextAreaField, TextField } from "@/components/form/field";
+import { SelectField, TextAreaField, TextField } from "@/components/form/field";
 import { FormDialog } from "@/components/form/form-dialog";
-import { EmptyState, Section } from "@/components/layout/page";
+import { Section } from "@/components/layout/page";
 import { Badge } from "@/components/ui/badge";
 import { ButtonLink } from "@/components/ui/button-link";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -14,24 +15,25 @@ import {
   getClient,
   listTemplates,
   onboardingForClient,
-  sendOnboardingAction,
   storedCustom,
-  updateChecklistAction,
   updateClientAction,
 } from "@/features/clients";
-import { formatBytes, listFiles } from "@/features/files";
-import { displayStatus, listInvoices } from "@/features/invoices";
-import { listProjects } from "@/features/projects";
-import { listProposals } from "@/features/proposals";
-import { inviteAction, listMembers, listRoles } from "@/features/team";
+import { formatBytes, pageFiles } from "@/features/files";
+import { displayStatus, invoiceBalance, pageInvoices } from "@/features/invoices";
+import { pageProjects } from "@/features/projects";
+import { pageProposals } from "@/features/proposals";
+import { listMembers, listRoles } from "@/features/team";
 import { t } from "@/i18n";
 import { today } from "@/lib/dates";
 import { tenantHref } from "@/lib/href";
+import { firstPage } from "@/lib/pagination";
 import { requireTenantPermission } from "@/server/auth/session";
 import { db } from "@/server/db";
 import type { Scope } from "@/server/rbac/resolve";
 import { customFieldsFor } from "@/server/shared";
 import { hasPermission, requirePermission, type TenantContext } from "@/server/tenancy/context";
+import { ClientOnboardingSection } from "./_components/client-onboarding";
+import { ClientPortalUsersSection } from "./_components/client-portal-users";
 
 function scopeOf(ctx: TenantContext, permission: string): Scope | null {
   try {
@@ -42,6 +44,18 @@ function scopeOf(ctx: TenantContext, permission: string): Scope | null {
 }
 
 const link = "font-medium underline-offset-4 hover:underline";
+
+/** Nothing to show (no permission): same shape as a page of rows. */
+const noRows = { rows: [], total: 0, page: 1, size: 0 };
+
+/** "View all (N)" next to a short list, when the client has more than it shows. */
+function ViewAll({ href, total, shown }: { href: Route; total: number; shown: number }) {
+  return total > shown ? (
+    <Link href={href} className="text-sm font-medium text-primary underline-offset-4 hover:underline">
+      {t("list.viewAll", { count: total })}
+    </Link>
+  ) : null;
+}
 
 export default async function ClientPage({ params }: PageProps<"/[tenant]/clients/[clientId]">) {
   const { tenant, clientId } = await params;
@@ -59,6 +73,8 @@ export default async function ClientPage({ params }: PageProps<"/[tenant]/client
   const fileScope = scopeOf(ctx, "files.read");
   const canInvoices = hasPermission(ctx, "invoices.read");
   const canProposals = hasPermission(ctx, "proposals.read");
+  // Short lists: the newest few, with a link to the full list filtered to this client.
+  const preview = firstPage(lists.previewSize);
 
   const [defs, onboarding, templates, members, roles, projects, invoices, proposals, files] =
     await Promise.all([
@@ -67,12 +83,18 @@ export default async function ClientPage({ params }: PageProps<"/[tenant]/client
       canOnboard ? listTemplates(database, ctx.tenant.id) : Promise.resolve([]),
       canInvite || canWrite ? listMembers(database, ctx.tenant.id) : Promise.resolve([]),
       canInvite ? listRoles(database, ctx.tenant.id) : Promise.resolve([]),
-      projectScope ? listProjects(database, ctx, projectScope, { clientId: client.id }) : Promise.resolve([]),
-      canInvoices ? listInvoices(database, ctx.tenant.id, { clientId: client.id }) : Promise.resolve([]),
-      canProposals ? listProposals(database, ctx.tenant.id, { clientId: client.id }) : Promise.resolve([]),
+      projectScope
+        ? pageProjects(database, ctx, projectScope, { clientId: client.id }, preview)
+        : Promise.resolve(noRows),
+      canInvoices
+        ? pageInvoices(database, ctx.tenant.id, { clientId: client.id }, preview)
+        : Promise.resolve(noRows),
+      canProposals
+        ? pageProposals(database, ctx.tenant.id, { clientId: client.id }, preview)
+        : Promise.resolve(noRows),
       fileScope
-        ? listFiles(database, ctx, fileScope, { entityType: "client", entityId: client.id })
-        : Promise.resolve([]),
+        ? pageFiles(database, ctx, fileScope, { entityType: "client", entityId: client.id }, preview)
+        : Promise.resolve(noRows),
     ]);
   const custom = storedCustom(client.custom);
   const portalUsers = members.filter((m) => m.kind === "client" && m.clientId === client.id);
@@ -131,6 +153,18 @@ export default async function ClientPage({ params }: PageProps<"/[tenant]/client
                   defaultValue={client.email}
                 />
                 <TextField name="phone" label={t("form.phone")} type="tel" defaultValue={client.phone} />
+                <TextField
+                  name="contactName"
+                  label={t("clients.contactName")}
+                  defaultValue={client.contactName}
+                />
+                <TextField
+                  name="billingEmail"
+                  label={t("clients.billingEmail")}
+                  hint={t("clients.billingEmailHint")}
+                  type="email"
+                  defaultValue={client.billingEmail}
+                />
               </div>
               <TextField
                 name="website"
@@ -164,6 +198,8 @@ export default async function ClientPage({ params }: PageProps<"/[tenant]/client
         <dl className="grid gap-3 surface p-4 text-sm sm:grid-cols-2">
           {[
             [t("form.email.label"), client.email],
+            [t("clients.contactName"), client.contactName],
+            [t("clients.billingEmail"), client.billingEmail],
             [t("form.phone"), client.phone],
             [t("clients.website"), client.website],
             [t("clients.address"), client.address],
@@ -183,206 +219,43 @@ export default async function ClientPage({ params }: PageProps<"/[tenant]/client
         <CustomFieldValues defs={defs} values={custom} />
       </Section>
 
-      <Section
-        title={t("onboarding.title")}
-        actions={
-          canOnboard && templates.length > 0 ? (
-            <FormDialog
-              trigger={t("onboarding.send")}
-              title={t("onboarding.send")}
-              action={sendOnboardingAction.bind(null, tenant)}
-              submitLabel={t("onboarding.send")}
-              size="sm"
-            >
-              <input type="hidden" name="clientId" value={client.id} />
-              <SelectField
-                name="templateId"
-                label={t("onboarding.template")}
-                options={templates.map((tp) => ({ value: tp.id, label: tp.name }))}
-              />
-            </FormDialog>
-          ) : null
-        }
-      >
-        {canOnboard && templates.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            {t("onboarding.needTemplate")}{" "}
-            <Link href={tenantHref(tenant, "clients/onboarding")} className={link}>
-              {t("onboarding.templates")}
-            </Link>
-          </p>
-        ) : null}
-        {onboarding.length === 0 ? (
-          <EmptyState title={t("onboarding.none")} />
-        ) : (
-          <div className="grid gap-3">
-            {onboarding.map((req) => (
-              <article key={req.id} className="grid gap-4 surface p-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="font-medium">{req.templateName}</p>
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <span>
-                      {t("onboarding.sentOn", { date: f.date(req.createdAt.toISOString().slice(0, 10)) })}
-                    </span>
-                    <StatusBadge status={req.status} label={t(`onboarding.status.${req.status}`)} />
-                  </div>
-                </div>
-                {req.fields.length > 0 ? (
-                  <div className="grid gap-2">
-                    <h3 className="text-sm font-semibold">{t("onboarding.answers")}</h3>
-                    <dl className="grid gap-2 text-sm">
-                      {req.fields.map((field) => {
-                        const answer = req.answers[field.key];
-                        return (
-                          <div key={field.key} className="grid gap-0.5">
-                            <dt className="text-xs text-muted-foreground">{field.label}</dt>
-                            <dd className="whitespace-pre-line">
-                              {typeof answer === "string" && answer ? (
-                                answer
-                              ) : (
-                                <span className="text-muted-foreground">{t("onboarding.noAnswer")}</span>
-                              )}
-                            </dd>
-                          </div>
-                        );
-                      })}
-                    </dl>
-                  </div>
-                ) : null}
-                {req.checklist.length > 0 || canOnboard ? (
-                  canOnboard && req.status !== "completed" ? (
-                    <ActionForm
-                      action={updateChecklistAction.bind(null, tenant)}
-                      keepValues
-                      className="gap-3"
-                    >
-                      <input type="hidden" name="id" value={req.id} />
-                      <fieldset className="grid gap-2">
-                        <legend className="mb-1 text-sm font-semibold">{t("onboarding.checklist")}</legend>
-                        {req.checklist.map((item) => (
-                          <label key={item} className="flex items-center gap-2 text-sm">
-                            <input
-                              type="checkbox"
-                              name="done"
-                              value={item}
-                              defaultChecked={req.checklistDone.includes(item)}
-                              className="size-4 rounded border-input accent-primary"
-                            />
-                            {item}
-                          </label>
-                        ))}
-                      </fieldset>
-                      <CheckboxField name="complete" label={t("onboarding.markComplete")} />
-                      <SubmitButton variant="outline" size="sm" className="justify-self-start">
-                        {t("onboarding.saveChecklist")}
-                      </SubmitButton>
-                    </ActionForm>
-                  ) : (
-                    <ul className="grid gap-1 text-sm">
-                      {req.checklist.map((item) => (
-                        <li
-                          key={item}
-                          className={
-                            req.checklistDone.includes(item)
-                              ? "text-muted-foreground line-through"
-                              : undefined
-                          }
-                        >
-                          {item}
-                        </li>
-                      ))}
-                    </ul>
-                  )
-                ) : null}
-              </article>
-            ))}
-          </div>
-        )}
-      </Section>
+      <ClientOnboardingSection
+        ctx={ctx}
+        tenant={tenant}
+        client={client}
+        onboarding={onboarding}
+        templates={templates}
+        canOnboard={canOnboard}
+        canInvite={canInvite}
+      />
 
       {canInvite || canWrite ? (
-        <Section
-          title={t("clients.portalUsers")}
-          actions={
-            canInvite && clientRoles.length > 0 ? (
-              <FormDialog
-                trigger={t("clients.invitePortal")}
-                title={t("clients.invitePortal")}
-                description={t("clients.inviteHint")}
-                action={inviteAction.bind(null, tenant)}
-                submitLabel={t("team.invite")}
-                size="sm"
-              >
-                <input type="hidden" name="kind" value="client" />
-                <input type="hidden" name="clientId" value={client.id} />
-                <TextField
-                  name="email"
-                  label={t("form.email.label")}
-                  type="email"
-                  defaultValue={client.email}
-                  required
-                />
-                <fieldset className="grid gap-2">
-                  <legend className="mb-1 text-sm font-medium">{t("team.roles")}</legend>
-                  {clientRoles.map((role) => (
-                    <label key={role.id} className="flex items-start gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        name="roleIds"
-                        value={role.id}
-                        defaultChecked={role.key === "client_owner"}
-                        className="mt-0.5 size-4 rounded border-input accent-primary"
-                      />
-                      <span className="grid">
-                        <span>{role.name}</span>
-                        {role.description ? (
-                          <span className="text-xs text-muted-foreground">{role.description}</span>
-                        ) : null}
-                      </span>
-                    </label>
-                  ))}
-                </fieldset>
-              </FormDialog>
-            ) : null
-          }
-        >
-          {portalUsers.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t("clients.noPortalUsers")}</p>
-          ) : (
-            <ul className="grid gap-2">
-              {portalUsers.map((m) => (
-                <li
-                  key={m.id}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-3 text-sm"
-                >
-                  <span className="grid">
-                    <span className="font-medium">{m.name}</span>
-                    <span className="text-xs text-muted-foreground">{m.email}</span>
-                  </span>
-                  <span className="flex flex-wrap gap-1">
-                    {m.roles.map((r) => (
-                      <Badge key={r.roleId} variant="outline">
-                        {r.name}
-                      </Badge>
-                    ))}
-                    {m.status === "disabled" ? (
-                      <StatusBadge status="disabled" label={t("team.statusDisabled")} />
-                    ) : null}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Section>
+        <ClientPortalUsersSection
+          ctx={ctx}
+          tenant={tenant}
+          client={client}
+          portalUsers={portalUsers}
+          clientRoles={clientRoles}
+          canInvite={canInvite}
+        />
       ) : null}
 
       {projectScope ? (
-        <Section title={t("clients.projects")}>
-          {projects.length === 0 ? (
+        <Section
+          title={t("clients.projects")}
+          actions={
+            <ViewAll
+              href={tenantHref(tenant, `projects?client=${client.id}`)}
+              total={projects.total}
+              shown={projects.rows.length}
+            />
+          }
+        >
+          {projects.rows.length === 0 ? (
             <p className="text-sm text-muted-foreground">{t("projects.none")}</p>
           ) : (
             <ul className="grid gap-2">
-              {projects.map((p) => (
+              {projects.rows.map((p) => (
                 <li
                   key={p.id}
                   className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-3 text-sm"
@@ -401,13 +274,22 @@ export default async function ClientPage({ params }: PageProps<"/[tenant]/client
       ) : null}
 
       {canProposals ? (
-        <Section title={t("clients.proposals")}>
-          {proposals.length === 0 ? (
+        <Section
+          title={t("clients.proposals")}
+          actions={
+            <ViewAll
+              href={tenantHref(tenant, `proposals?client=${client.id}`)}
+              total={proposals.total}
+              shown={proposals.rows.length}
+            />
+          }
+        >
+          {proposals.rows.length === 0 ? (
             <p className="text-sm text-muted-foreground">{t("proposals.none")}</p>
           ) : (
             <Table>
               <TableBody>
-                {proposals.map(({ proposal: p }) => (
+                {proposals.rows.map(({ proposal: p }) => (
                   <TableRow key={p.id}>
                     <TableCell>
                       <Link href={tenantHref(tenant, `proposals/${p.id}`)} className={link}>
@@ -430,8 +312,25 @@ export default async function ClientPage({ params }: PageProps<"/[tenant]/client
       ) : null}
 
       {canInvoices ? (
-        <Section title={t("clients.invoices")}>
-          {invoices.length === 0 ? (
+        <Section
+          title={t("clients.invoices")}
+          actions={
+            <div className="flex flex-wrap items-center gap-3">
+              <Link
+                href={tenantHref(tenant, `clients/${client.id}/statement`)}
+                className="text-sm font-medium text-primary underline-offset-4 hover:underline"
+              >
+                {t("statement.title")}
+              </Link>
+              <ViewAll
+                href={tenantHref(tenant, `invoices?client=${client.id}`)}
+                total={invoices.total}
+                shown={invoices.rows.length}
+              />
+            </div>
+          }
+        >
+          {invoices.rows.length === 0 ? (
             <p className="text-sm text-muted-foreground">{t("invoices.none")}</p>
           ) : (
             <Table>
@@ -444,7 +343,7 @@ export default async function ClientPage({ params }: PageProps<"/[tenant]/client
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {invoices.map(({ invoice: inv }) => {
+                {invoices.rows.map(({ invoice: inv }) => {
                   const status = displayStatus(inv, now);
                   return (
                     <TableRow key={inv.id}>
@@ -458,7 +357,7 @@ export default async function ClientPage({ params }: PageProps<"/[tenant]/client
                         <StatusBadge status={status} label={t(`invoices.status.${status}`)} />
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
-                        {f.money(inv.totalMinor - inv.paidMinor, inv.currency)}
+                        {f.money(invoiceBalance(inv), inv.currency)}
                       </TableCell>
                     </TableRow>
                   );
@@ -470,12 +369,21 @@ export default async function ClientPage({ params }: PageProps<"/[tenant]/client
       ) : null}
 
       {fileScope ? (
-        <Section title={t("clients.files")}>
-          {files.length === 0 ? (
+        <Section
+          title={t("clients.files")}
+          actions={
+            <ViewAll
+              href={tenantHref(tenant, `files?type=client&entity=${client.id}`)}
+              total={files.total}
+              shown={files.rows.length}
+            />
+          }
+        >
+          {files.rows.length === 0 ? (
             <p className="text-sm text-muted-foreground">{t("files.none")}</p>
           ) : (
             <ul className="grid gap-2">
-              {files.map(({ file }) => (
+              {files.rows.map(({ file }) => (
                 <li
                   key={file.id}
                   className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-3 text-sm"

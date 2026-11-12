@@ -33,4 +33,10 @@ export const enUi3 = {
   "portal.openOnboarding": "Open the form",
   "portal.issued": "Issued {date}",
   "portal.due": "Due {date}",
+  "dash.byCategory": "Spending by category",
+  "dash.byCategorySub": "This financial year",
+  "dash.byCategoryNone": "No spending recorded this financial year.",
+  "dash.otherCategories": "Everything else",
+  "dash.spentTotal": "spent",
+  "finance.byMonth": "Month by month",
 } as const;

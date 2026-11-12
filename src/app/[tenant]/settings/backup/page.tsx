@@ -3,7 +3,12 @@ import { ActionButton } from "@/components/form/action-button";
 import { Section } from "@/components/layout/page";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { buttonVariants } from "@/components/ui/button";
-import { disconnectBackupAction, getConnection, queueBackupAction } from "@/features/backup";
+import {
+  canBackUpEverything,
+  disconnectBackupAction,
+  getConnection,
+  queueBackupAction,
+} from "@/features/backup";
 import { t } from "@/i18n";
 import { formatDateTime } from "@/lib/dates";
 import { cn } from "@/lib/utils";
@@ -17,7 +22,10 @@ export default async function BackupPage({ params, searchParams }: PageProps<"/[
   const sp = await searchParams;
   const { ctx } = await requireTenantPermission(tenant, "backup.manage");
   const { timezone, locale } = ctx.tenant.settings;
-  const conn = await getConnection(db(), ctx.tenant.id);
+  const [conn, full] = await Promise.all([
+    getConnection(db(), ctx.tenant.id),
+    canBackUpEverything(db(), ctx),
+  ]);
   const configured = googleConfigured();
   const error = param(sp, "error");
   const errorText =
@@ -90,12 +98,16 @@ export default async function BackupPage({ params, searchParams }: PageProps<"/[
                 ) : null}
               </div>
               <div className="flex flex-wrap gap-2">
-                <ActionButton action={queue} values={{ kind: "full" }} variant="default">
-                  {t("backup.fullNow")}
-                </ActionButton>
-                <ActionButton action={queue} values={{ kind: "snapshot" }}>
-                  {t("backup.snapshotNow")}
-                </ActionButton>
+                {full ? (
+                  <>
+                    <ActionButton action={queue} values={{ kind: "full" }} variant="default">
+                      {t("backup.fullNow")}
+                    </ActionButton>
+                    <ActionButton action={queue} values={{ kind: "snapshot" }}>
+                      {t("backup.snapshotNow")}
+                    </ActionButton>
+                  </>
+                ) : null}
                 <ActionButton
                   action={disconnectBackupAction.bind(null, tenant)}
                   variant="ghost"
@@ -111,7 +123,7 @@ export default async function BackupPage({ params, searchParams }: PageProps<"/[
                 <p className="font-medium">{t("backup.notConnected")}</p>
                 <p className="text-muted-foreground">{t("settings.notConnectedHint")}</p>
               </div>
-              {configured ? (
+              {configured && full ? (
                 <a
                   href={`/api/google/connect/?tenant=${encodeURIComponent(ctx.tenant.slug)}`}
                   className={cn(buttonVariants(), "justify-self-start")}
@@ -125,13 +137,17 @@ export default async function BackupPage({ params, searchParams }: PageProps<"/[
       </Section>
 
       <Section title={t("backup.export")} description={t("backup.exportSub")}>
-        <a
-          href={`/api/t/${encodeURIComponent(ctx.tenant.slug)}/export/all.json`}
-          className={cn(buttonVariants({ variant: "outline" }), "justify-self-start")}
-          download
-        >
-          {t("backup.exportJson")}
-        </a>
+        {full ? (
+          <a
+            href={`/api/t/${encodeURIComponent(ctx.tenant.slug)}/export/all.json`}
+            className={cn(buttonVariants({ variant: "outline" }), "justify-self-start")}
+            download
+          >
+            {t("backup.exportJson")}
+          </a>
+        ) : (
+          <p className="text-sm text-muted-foreground">{t("security.fullBackupOnly")}</p>
+        )}
         {canCsv ? (
           <div className="grid gap-2">
             <h3 className="text-sm font-medium">{t("backup.sets")}</h3>

@@ -7,6 +7,7 @@ import { site } from "@/config";
 import { t } from "@/i18n";
 import { appHref } from "@/lib/href";
 import { memberBusinessName } from "@/server/auth/handoff-access";
+import { cleanBrowserHash } from "@/server/auth/handoff-browser";
 import { safeNextPath } from "@/server/auth/redirect";
 import { getSessionUser } from "@/server/auth/session";
 import { db } from "@/server/db";
@@ -22,10 +23,12 @@ export default async function HandoffConfirmPage({ searchParams }: PageProps<"/l
   const query = await searchParams;
   const host = cleanHost(typeof query.host === "string" ? query.host : "");
   const next = safeNextPath(query.next);
-  const slug = await slugForHost(host);
+  // Hash of the custom domain's nonce cookie: the token will only work in that browser.
+  const browser = cleanBrowserHash(query.browser);
+  const slug = browser ? await slugForHost(host) : null;
   const user = slug ? await getSessionUser() : null;
   if (slug && !user) {
-    const back = `/login/handoff/?${new URLSearchParams({ host, next }).toString()}`;
+    const back = `/login/handoff/?${new URLSearchParams({ host, next, browser }).toString()}`;
     redirect(appHref(`/login/?next=${encodeURIComponent(back)}`));
   }
   const business = slug && user ? await memberBusinessName(db(), user.id, slug) : null;
@@ -64,6 +67,7 @@ export default async function HandoffConfirmPage({ searchParams }: PageProps<"/l
           </div>
           <input type="hidden" name="host" value={host} />
           <input type="hidden" name="next" value={next} />
+          <input type="hidden" name="browser" value={browser} />
           <div className="flex flex-wrap gap-2">
             <Button type="submit" size="lg" className="break-all">
               {t("handoff.continue", { host })}

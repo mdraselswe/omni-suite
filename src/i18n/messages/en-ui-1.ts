@@ -17,7 +17,6 @@ export const enUi1 = {
   "proposals.preparedFor": "Prepared for",
   "proposals.created": "Date",
 
-  "invoices.inList": "In this list",
   "invoices.dueHint": "Leave empty to use your payment terms ({days} days).",
   "invoices.copyOf": "Copying lines from {number}.",
   "invoices.methodHint": "Bank transfer, card, cash…",

@@ -6,19 +6,13 @@ import { Badge } from "@/components/ui/badge";
 import {
   deleteTemplateAction,
   listTemplates,
+  questionLines,
   saveTemplateAction,
   type OnboardingField,
 } from "@/features/clients";
 import { t } from "@/i18n";
 import { requireTenantPermission } from "@/server/auth/session";
 import { db } from "@/server/db";
-
-/** Back to the editable line format: "label | type | required". */
-function questionLines(fields: readonly OnboardingField[]): string {
-  return fields
-    .map((f) => [f.label, f.type, f.required ? "required" : ""].filter(Boolean).join(" | "))
-    .join("\n");
-}
 
 function TemplateFields({
   template,
@@ -32,8 +26,8 @@ function TemplateFields({
       <TextAreaField
         name="questions"
         label={t("onboarding.questions")}
-        hint={t("onboarding.questionsHint")}
-        rows={6}
+        hint={t("access.onboarding.questionsHint")}
+        rows={8}
         defaultValue={template ? questionLines(template.fields) : ""}
       />
       <TextAreaField
@@ -111,6 +105,12 @@ export default async function OnboardingTemplatesPage({ params }: PageProps<"/[t
                   {tp.fields.map((field) => (
                     <li key={field.key} className="flex flex-wrap items-center gap-1.5">
                       <span>{field.label}</span>
+                      {field.type === "text" ? null : (
+                        <Badge variant="secondary">{t(`access.onboarding.type.${field.type}`)}</Badge>
+                      )}
+                      {field.type === "select" ? (
+                        <span className="text-xs text-muted-foreground">{field.options.join(" · ")}</span>
+                      ) : null}
                       {field.required ? (
                         <Badge variant="outline">{t("onboarding.requiredBadge")}</Badge>
                       ) : null}

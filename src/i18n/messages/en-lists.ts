@@ -1,0 +1,30 @@
+/** UI text for pagination, live search and list views. */
+export const enLists = {
+  "list.pagination": "Pagination",
+  "list.paginationOf": "{list}: pages",
+  "list.showing": "Showing {from}–{to} of {total}",
+  "list.pageOf": "Page {page} of {count}",
+  "list.previous": "Previous",
+  "list.next": "Next",
+  "list.previousPage": "Previous page",
+  "list.nextPage": "Next page",
+  "list.goToPage": "Page {page}",
+  "list.currentPage": "Page {page}, current page",
+  "list.perPage": "Rows per page",
+  "list.apply": "Apply",
+  "list.searching": "Searching…",
+  "list.noResults": "No results for “{q}”",
+  "list.noResultsBody": "Check the spelling, try fewer words or clear the search.",
+  "list.clearSearch": "Clear search",
+  "list.viewAll": "View all ({count})",
+  "list.showAll": "Show all",
+
+  "leads.view": "View",
+  "leads.viewBoard": "Board",
+  "leads.viewList": "List",
+  "leads.columnShowing": "Showing the newest {shown} of {total}",
+  "leads.columnSeeAll": "See all in the list",
+  "leads.noneList": "No leads match these filters.",
+
+  "invoices.draftsHint": "Not sent yet",
+} as const;

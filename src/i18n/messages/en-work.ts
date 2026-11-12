@@ -33,8 +33,6 @@ export const enWork = {
   "onboarding.templatesSub": "Questions your new clients answer in their portal, plus your own checklist.",
   "onboarding.newTemplate": "New form",
   "onboarding.questions": "Questions",
-  "onboarding.questionsHint":
-    "One per line: Question text | text or textarea | required (optional). Example: What are your goals? | textarea | required",
   "onboarding.checklist": "Checklist",
   "onboarding.checklistHint": "One item per line.",
   "onboarding.status.sent": "Waiting for client",

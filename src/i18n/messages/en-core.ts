@@ -96,9 +96,6 @@ export const enCore = {
   "invite.invalid": "This invitation link is invalid or was already used.",
   "invite.expired": "This invitation has expired. Ask for a new one.",
   "invite.wrongEmail": "This invitation is for {email}. Sign in with that email address.",
-  "invite.emailSubject": "You're invited to {name} on OmniSuite",
-  "invite.emailBody":
-    "{inviter} invited you to {name}.\n\nAccept here: {link}\n\nThe link expires in 14 days.",
 
   // Shell
   "shell.businesses": "Businesses",

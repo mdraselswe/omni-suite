@@ -1,5 +1,6 @@
 import { formatters } from "@/components/data/format";
 import { ActionButton } from "@/components/form/action-button";
+import { ComboboxField } from "@/components/form/combobox-field";
 import { SelectField, TextField } from "@/components/form/field";
 import { FormDialog } from "@/components/form/form-dialog";
 import { Section } from "@/components/layout/page";
@@ -18,6 +19,7 @@ import {
   toggleCategoryAction,
 } from "@/features/finance";
 import { t } from "@/i18n";
+import { currencyOptions } from "@/lib/intl-options";
 import { requireTenantPermission } from "@/server/auth/session";
 import { db } from "@/server/db";
 import { hasPermission } from "@/server/tenancy/context";
@@ -54,11 +56,13 @@ export default async function FinanceSetupPage({ params }: PageProps<"/[tenant]/
                   label: t(`finance.type.${k}`),
                 }))}
               />
-              <TextField
+              <ComboboxField
                 name="currency"
                 label={t("finance.currency")}
-                defaultValue={f.currency}
-                maxLength={3}
+                hint={t("locale.accountCurrencyHint")}
+                options={currencyOptions()}
+                defaultValue={ctx.tenant.settings.currency}
+                required
               />
               <TextField name="opening" label={t("finance.opening")} inputMode="decimal" placeholder="0.00" />
             </FormDialog>

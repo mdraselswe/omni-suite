@@ -1,5 +1,6 @@
 import {
   AlertCircle,
+  ChartPie,
   FolderKanban,
   Hourglass,
   ListTodo,
@@ -15,6 +16,7 @@ import type { Route } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AreaChart } from "@/components/data/area-chart";
+import { DonutChart } from "@/components/data/donut-chart";
 import { formatters } from "@/components/data/format";
 import { StatusBadge } from "@/components/data/status-badge";
 import { EmptyState, PageHeader, Panel, StatCard } from "@/components/layout/page";
@@ -22,8 +24,8 @@ import { ButtonLink } from "@/components/ui/button-link";
 import { Progress } from "@/components/ui/progress";
 import { BusinessInsights, canUseAi } from "@/features/ai";
 import { pipelineSummary } from "@/features/crm";
-import { listAccounts, monthlyTotals, profitAndLoss } from "@/features/finance";
-import { listInvoices, monthlyRecurring, receivables } from "@/features/invoices";
+import { cashPosition, monthlyTotals, profitAndLoss, runway as runwayOf } from "@/features/finance";
+import { invoiceBalance, listInvoices, monthlyRecurring, receivables } from "@/features/invoices";
 import { listProjects, myDueTasks } from "@/features/projects";
 import { t } from "@/i18n";
 import {
@@ -39,6 +41,7 @@ import { tenantHref } from "@/lib/href";
 import { cn } from "@/lib/utils";
 import { requireTenant } from "@/server/auth/session";
 import { db } from "@/server/db";
+import { latestRate } from "@/server/fx";
 import { hasPermission, isModuleEnabled } from "@/server/tenancy/context";
 import { navFor } from "@/server/tenancy/nav";
 
@@ -72,9 +75,16 @@ export default async function DashboardPage({ params, searchParams }: PageProps<
   const runwayFrom = monthStart(addMonths(now, -3));
   const runwayTo = addDays(monthStart(now), -1);
 
-  const [accounts, month, fy, trend, spend, owed, mrr, overdue, pipeline, tasks, projects] =
-    await Promise.all([
-      when(canFinance, () => listAccounts(database, ctx.tenant.id)),
+  const [cashNow, month, fy, trend, spend, owed, mrr, overdue, pipeline, tasks, projects] = await Promise.all(
+    [
+      when(canFinance, () =>
+        cashPosition(
+          database,
+          ctx.tenant.id,
+          ctx.tenant.settings.currency,
+          async (foreign, base) => (await latestRate(foreign, base))?.rate ?? null,
+        ),
+      ),
       when(canFinance, () => profitAndLoss(database, ctx.tenant.id, monthStart(now), now)),
       when(canFinance, () =>
         profitAndLoss(
@@ -86,15 +96,16 @@ export default async function DashboardPage({ params, searchParams }: PageProps<
       ),
       when(canFinance, () => monthlyTotals(database, ctx.tenant.id, trendFrom, now)),
       when(canFinance, () => monthlyTotals(database, ctx.tenant.id, runwayFrom, runwayTo)),
-      when(canInvoices, () => receivables(database, ctx.tenant.id, now)),
+      when(canInvoices, () => receivables(database, ctx.tenant.id, now, ctx.tenant.settings.currency)),
       when(canInvoices, () => monthlyRecurring(database, ctx)),
       when(canInvoices, () =>
         listInvoices(database, ctx.tenant.id, { status: "overdue", today: now, limit: 6 }),
       ),
-      when(canPipeline, () => pipelineSummary(database, ctx)),
+      when(canPipeline, () => pipelineSummary(database, ctx, now)),
       when(hasTasks, () => myDueTasks(database, ctx, addDays(now, 7))),
       when(canDash && projectScope !== undefined, () => listProjects(database, ctx, projectScope ?? "own")),
-    ]);
+    ],
+  );
 
   const firstName = ctx.user.name.split(/\s+/)[0] ?? ctx.user.name;
 
@@ -155,12 +166,17 @@ export default async function DashboardPage({ params, searchParams }: PageProps<
     );
   }
 
-  const cash = (accounts ?? [])
-    .filter((a) => a.currency === f.currency)
-    .reduce((sum, a) => sum + a.balanceMinor, 0n);
-  const spend3 = (spend ?? []).reduce((sum, m) => sum + m.expenseMinor, 0n);
-  const avgSpend = spend3 / 3n;
-  const runway = avgSpend > 0n ? Number((cash * 10n) / avgSpend) / 10 : null;
+  const cash = cashNow?.totalMinor ?? 0n;
+  const listOf = (rows: readonly { currency: string; minor: bigint }[]) =>
+    rows.map((r) => f.money(r.minor, r.currency)).join(", ");
+  const cashHint =
+    cashNow && cashNow.unconverted.length > 0
+      ? t("dash.cashHintUnconverted", { currency: f.currency, others: listOf(cashNow.unconverted) })
+      : cashNow && cashNow.converted.length > 0
+        ? t("dash.cashHintMixed", { currency: f.currency, others: listOf(cashNow.converted) })
+        : t("dash.cashHintBase", { currency: f.currency });
+  const burn = runwayOf(cash, spend ?? []);
+  const runway = burn.runway;
   const statuses = ctx.tenant.settings.projectStatuses;
   const doneStatuses = new Set(statuses.filter((s) => s.done).map((s) => s.key));
   const openProjects = (projects ?? []).filter((p) => !doneStatuses.has(p.status));
@@ -174,7 +190,17 @@ export default async function DashboardPage({ params, searchParams }: PageProps<
   const totalIncome = series.reduce((sum, s) => sum + s.income, 0n);
   const totalSpend = series.reduce((sum, s) => sum + s.expense, 0n);
   const hasTrend = totalIncome > 0n || totalSpend > 0n;
-  const major = (v: bigint) => Number(v) / 100;
+  const major = (v: bigint) => f.major(v);
+
+  // This financial year's spending by category: the biggest four and the rest together.
+  const spendLines = (fy?.lines ?? [])
+    .filter((l) => l.kind === "expense" && l.totalMinor > 0n)
+    .sort((a, b) => (b.totalMinor > a.totalMinor ? 1 : b.totalMinor < a.totalMinor ? -1 : 0));
+  const restMinor = spendLines.slice(4).reduce((sum, l) => sum + l.totalMinor, 0n);
+  const spendSlices = [
+    ...spendLines.slice(0, 4).map((l) => ({ label: l.categoryName, minor: l.totalMinor })),
+    ...(restMinor > 0n ? [{ label: t("dash.otherCategories"), minor: restMinor }] : []),
+  ].map((s) => ({ label: s.label, value: major(s.minor), formatted: f.money(s.minor) }));
 
   const highlights = [
     canFinance ? (
@@ -184,7 +210,7 @@ export default async function DashboardPage({ params, searchParams }: PageProps<
         icon={Wallet}
         label={t("dash.cash")}
         value={f.money(cash)}
-        hint={t("dash.cashHint")}
+        hint={cashHint}
       />
     ) : null,
     canFinance ? (
@@ -204,7 +230,16 @@ export default async function DashboardPage({ params, searchParams }: PageProps<
         icon={Receipt}
         label={t("dash.receivable")}
         value={f.money(owed?.totalMinor ?? 0n)}
-        hint={t("dash.overdue", { amount: f.money(owed?.overdueMinor ?? 0n) })}
+        hint={[
+          t("dash.overdue", { amount: f.money(owed?.overdueMinor ?? 0n) }),
+          owed && owed.foreign.length > 0
+            ? t("dash.receivableForeign", {
+                amounts: owed.foreign.map((o) => f.money(o.totalMinor, o.currency)).join(", "),
+              })
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" · ")}
       />
     ) : null,
     pipeline ? (
@@ -214,7 +249,11 @@ export default async function DashboardPage({ params, searchParams }: PageProps<
         icon={Target}
         label={t("dash.pipeline")}
         value={f.money(pipeline.valueMinor)}
-        hint={t("dash.pipelineHint", { count: pipeline.count })}
+        hint={
+          pipeline.dueCount > 0
+            ? t("dash.pipelineHintDue", { count: pipeline.count, due: pipeline.dueCount })
+            : t("dash.pipelineHint", { count: pipeline.count })
+        }
       />
     ) : null,
   ].filter(Boolean);
@@ -316,7 +355,7 @@ export default async function DashboardPage({ params, searchParams }: PageProps<
                   ? t("dash.runwayNone")
                   : t("dash.runwayValue", { months: runway.toLocaleString(f.locale) })
               }
-              hint={t("dash.runwayHint")}
+              hint={t("dash.runwayHintMonths", { months: Math.max(burn.months, 1) })}
               tone={runway !== null && runway < 3 ? "negative" : "default"}
             />
           </>
@@ -334,17 +373,40 @@ export default async function DashboardPage({ params, searchParams }: PageProps<
         ) : null}
       </div>
 
-      {canUseAi(ctx) ? (
-        <Panel
-          title={t("ai.insights.title")}
-          description={t("ai.insights.sub")}
-          actions={<Sparkles aria-hidden="true" className="size-5 text-primary" />}
-        >
-          <BusinessInsights tenant={tenant} />
-        </Panel>
+      {canFinance || canUseAi(ctx) ? (
+        <div className={cn("grid gap-6", canFinance && canUseAi(ctx) && "lg:grid-cols-2")}>
+          {canFinance ? (
+            <Panel
+              className="reveal"
+              title={t("dash.byCategory")}
+              description={t("dash.byCategorySub")}
+              actions={<ChartPie aria-hidden="true" className="size-5 text-primary" />}
+            >
+              {spendSlices.length > 0 ? (
+                <DonutChart
+                  slices={spendSlices}
+                  total={f.money(fy?.expenseMinor ?? 0n)}
+                  totalLabel={t("dash.spentTotal")}
+                />
+              ) : (
+                <EmptyState title={t("dash.byCategoryNone")} icon={ChartPie} bare />
+              )}
+            </Panel>
+          ) : null}
+          {canUseAi(ctx) ? (
+            <Panel
+              className="reveal"
+              title={t("ai.insights.title")}
+              description={t("ai.insights.sub")}
+              actions={<Sparkles aria-hidden="true" className="size-5 text-primary" />}
+            >
+              <BusinessInsights tenant={tenant} />
+            </Panel>
+          ) : null}
+        </div>
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid reveal gap-6 lg:grid-cols-3">
         {projects ? (
           <Panel
             title={t("dash.projects")}
@@ -421,7 +483,7 @@ export default async function DashboardPage({ params, searchParams }: PageProps<
                         </span>
                       </span>
                       <span className="font-medium tabular-nums">
-                        {f.money(invoice.totalMinor - invoice.paidMinor, invoice.currency)}
+                        {f.money(invoiceBalance(invoice), invoice.currency)}
                       </span>
                     </Link>
                   </li>

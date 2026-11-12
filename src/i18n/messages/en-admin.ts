@@ -135,7 +135,6 @@ export const enAdmin = {
   "audit.details": "Details",
   "audit.none": "No activity found.",
   "audit.system": "System",
-  "audit.older": "Older",
 
   "admin.title": "Platform admin",
   "admin.sub": "All businesses on this OmniSuite install.",
@@ -151,6 +150,7 @@ export const enAdmin = {
 
   "portal.welcome": "Welcome, {name}",
   "portal.sub": "Your projects, invoices and files with {business}.",
+  "portal.subWork": "Your projects and files with {business}.",
   "portal.openProjects": "Active projects",
   "portal.dueInvoices": "Invoices to pay",
   "portal.awaiting": "Waiting for your approval",

@@ -59,7 +59,7 @@ export function SidebarToggle() {
       aria-label={label}
       title={label}
       aria-pressed={collapsed}
-      className="hidden rounded-full header-control md:inline-flex"
+      className="hidden header-control rounded-full md:inline-flex"
     >
       <Icon aria-hidden="true" />
     </Button>

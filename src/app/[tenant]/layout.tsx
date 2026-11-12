@@ -35,7 +35,7 @@ export default async function TenantLayout({ children, params }: LayoutProps<"/[
     internal ? billingView(database, ctx.tenant) : Promise.resolve(null),
   ]);
   // On a custom domain the session belongs to this business only: no switching, account lives on the app host.
-  const bound = Boolean(session?.boundTenant);
+  const bound = Boolean(session?.boundTenantId);
   const accountHref = bound ? `${serverEnv().APP_URL}/account/` : "/account/";
   const paymentDue = billingState !== null && PAYMENT_DUE.has(billingState.status);
   const { branding } = ctx.tenant.settings;

@@ -40,7 +40,7 @@ export function CommandMenu({ items }: { items: readonly ShellNavItem[] }) {
         type="button"
         onClick={() => setOpen(true)}
         aria-label={t("shell.search")}
-        className="flex size-10 items-center gap-3 rounded-full header-control text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 max-sm:justify-center sm:h-10 sm:w-72 sm:px-4"
+        className="flex size-10 header-control items-center gap-3 rounded-full text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 max-sm:justify-center sm:h-10 sm:w-72 sm:px-4"
       >
         <Search className="size-4 shrink-0" aria-hidden="true" />
         <span className="flex-1 text-left max-sm:sr-only">{t("shell.search")}</span>

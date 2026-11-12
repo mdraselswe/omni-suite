@@ -1,24 +1,29 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { formatters } from "@/components/data/format";
-import { StatusBadge } from "@/components/data/status-badge";
 import { ActionButton } from "@/components/form/action-button";
+import { TextField } from "@/components/form/field";
 import { FormDialog } from "@/components/form/form-dialog";
 import { ButtonLink } from "@/components/ui/button-link";
 import { canUseAi } from "@/features/ai";
 import { DocumentLines, PrintButton } from "@/features/invoices";
 import {
   deleteProposalAction,
+  extendProposalAction,
   getProposal,
-  invoiceForProposal,
+  projectForProposal,
+  proposalBilling,
+  proposalDisplayStatus,
   ProposalFields,
+  ProposalStatusBadge,
   proposalToInvoiceAction,
+  proposalToProjectAction,
   reopenProposalAction,
   sendProposalAction,
   updateProposalAction,
 } from "@/features/proposals";
 import { t } from "@/i18n";
-import { formatDateTime } from "@/lib/dates";
+import { addDays, formatDateTime, today } from "@/lib/dates";
 import { tenantHref } from "@/lib/href";
 import { requireTenantPermission } from "@/server/auth/session";
 import { db } from "@/server/db";
@@ -35,10 +40,16 @@ export default async function ProposalPage({ params }: PageProps<"/[tenant]/prop
   const f = formatters(ctx);
   const settings = ctx.tenant.settings;
   const canWrite = hasPermission(ctx, "proposals.write");
-  const [clients, invoiced] = await Promise.all([
+  const accepted = p.status === "accepted";
+  const now = today(settings.timezone);
+  const status = proposalDisplayStatus(p, now);
+  const [clients, billing, project] = await Promise.all([
     canWrite && p.status === "draft" ? clientOptions(database, ctx.tenant.id) : Promise.resolve([]),
-    p.status === "accepted" ? invoiceForProposal(database, ctx.tenant.id, p.id) : Promise.resolve(null),
+    accepted ? proposalBilling(database, ctx.tenant.id, p) : Promise.resolve(null),
+    accepted ? projectForProposal(database, ctx.tenant.id, p.id) : Promise.resolve(null),
   ]);
+  const canInvoice = accepted && hasPermission(ctx, "invoices.write");
+  const canStartProject = accepted && !project && hasPermission(ctx, "projects.write");
 
   return (
     <div className="mx-auto grid max-w-4xl gap-6">
@@ -52,7 +63,7 @@ export default async function ProposalPage({ params }: PageProps<"/[tenant]/prop
           </Link>
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="font-heading text-2xl font-semibold tracking-tight">{p.number}</h1>
-            <StatusBadge status={p.status} label={t(`proposals.status.${p.status}`)} />
+            <ProposalStatusBadge status={status} />
           </div>
         </div>
         <div className="flex flex-wrap gap-2 print:hidden">
@@ -78,6 +89,26 @@ export default async function ProposalPage({ params }: PageProps<"/[tenant]/prop
             >
               {t("proposals.reopen")}
             </ActionButton>
+          ) : null}
+          {canWrite && p.status === "sent" ? (
+            <FormDialog
+              trigger={t("proposals.extend")}
+              title={t("proposals.extend")}
+              description={t("proposals.extendSub")}
+              action={extendProposalAction.bind(null, tenant)}
+              variant={status === "expired" ? "default" : "outline"}
+              icon={false}
+            >
+              <input type="hidden" name="id" value={p.id} />
+              <TextField
+                name="validUntil"
+                type="date"
+                label={t("proposals.extendDate")}
+                min={now}
+                defaultValue={p.validUntil && p.validUntil > now ? p.validUntil : addDays(now, 14)}
+                required
+              />
+            </FormDialog>
           ) : null}
           {canWrite && p.status === "draft" ? (
             <>
@@ -115,31 +146,81 @@ export default async function ProposalPage({ params }: PageProps<"/[tenant]/prop
               </ActionButton>
             </>
           ) : null}
-          {invoiced ? (
-            <ButtonLink href={tenantHref(tenant, `invoices/${invoiced.id}`)} variant="outline">
-              {t("proposals.invoicedAs", { number: invoiced.number })}
+          {billing?.invoices.map((inv) => (
+            <ButtonLink key={inv.id} href={tenantHref(tenant, `invoices/${inv.id}`)} variant="outline">
+              {t("proposals.invoicedAs", { number: inv.number })}
             </ButtonLink>
-          ) : p.status === "accepted" && hasPermission(ctx, "invoices.write") ? (
+          ))}
+          {project ? (
+            <ButtonLink href={tenantHref(tenant, `projects/${project.id}`)} variant="outline">
+              {t("proposals.openProject")}
+            </ButtonLink>
+          ) : null}
+          {canStartProject ? (
+            <ActionButton
+              action={proposalToProjectAction.bind(null, tenant)}
+              values={{ id: p.id }}
+              variant="outline"
+              size="default"
+            >
+              {t("proposals.startProject")}
+            </ActionButton>
+          ) : null}
+          {canInvoice && billing && billing.invoices.length === 0 ? (
+            <FormDialog
+              trigger={t("proposals.invoiceDeposit")}
+              title={t("proposals.invoiceDeposit")}
+              description={t("proposals.invoiceDepositSub")}
+              action={proposalToInvoiceAction.bind(null, tenant)}
+              variant="outline"
+              icon={false}
+            >
+              <input type="hidden" name="id" value={p.id} />
+              <TextField
+                name="deposit"
+                label={t("proposals.depositPercent")}
+                inputMode="decimal"
+                defaultValue="50"
+                required
+              />
+            </FormDialog>
+          ) : null}
+          {canInvoice && billing && billing.remainingMinor > 0n ? (
             <ActionButton
               action={proposalToInvoiceAction.bind(null, tenant)}
               values={{ id: p.id }}
               variant="default"
               size="default"
             >
-              {t("proposals.toInvoice")}
+              {billing.invoices.length === 0
+                ? t("proposals.toInvoice")
+                : t("proposals.invoiceRest", { amount: f.money(billing.remainingMinor, p.currency) })}
             </ActionButton>
           ) : null}
         </div>
       </div>
 
-      {p.respondedAt && p.respondedByName ? (
-        <p className="rounded-md border bg-muted/50 p-3 text-sm">
-          {t("proposals.respondedBy", {
-            status: t(`proposals.status.${p.status}`),
-            name: p.respondedByName,
-            date: formatDateTime(p.respondedAt, settings.timezone, settings.locale),
-          })}
+      {status === "expired" && p.validUntil ? (
+        <p role="status" className="rounded-md border border-destructive/40 p-3 text-sm text-destructive">
+          {t("proposals.expiredStaff", { date: f.date(p.validUntil) })}
         </p>
+      ) : null}
+
+      {p.respondedAt && p.respondedByName ? (
+        <div className="grid gap-1 rounded-md border bg-muted/50 p-3 text-sm">
+          <p>
+            {t("proposals.respondedBy", {
+              status: t(`proposals.status.${p.status}`),
+              name: p.respondedByName,
+              date: formatDateTime(p.respondedAt, settings.timezone, settings.locale),
+            })}
+          </p>
+          {p.status === "declined" && p.declineReason ? (
+            <p className="whitespace-pre-line">
+              {t("proposals.declineReasonShown", { reason: p.declineReason })}
+            </p>
+          ) : null}
+        </div>
       ) : null}
 
       <article className="grid gap-6 surface p-4 sm:p-8">
@@ -175,7 +256,7 @@ export default async function ProposalPage({ params }: PageProps<"/[tenant]/prop
           items={p.items}
           currency={p.currency}
           locale={settings.locale}
-          pricesIncludeTax={settings.tax.pricesIncludeTax}
+          pricesIncludeTax={p.pricesIncludeTax}
           taxName={settings.tax.name}
           totals={p}
         />

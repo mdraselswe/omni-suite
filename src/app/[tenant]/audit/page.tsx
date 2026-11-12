@@ -1,40 +1,40 @@
 import { FilterBar, FilterSearch, param } from "@/components/data/filter-bar";
+import { NoResults } from "@/components/data/no-results";
+import { Pagination } from "@/components/data/pagination";
 import { EmptyState, PageHeader } from "@/components/layout/page";
-import { ButtonLink } from "@/components/ui/button-link";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { listAudit } from "@/features/settings";
+import { pageAudit } from "@/features/settings";
 import { t } from "@/i18n";
 import { formatDateTime } from "@/lib/dates";
 import { tenantHref } from "@/lib/href";
+import { keepSize, parsePage } from "@/lib/pagination";
+import { normaliseSearch } from "@/lib/search";
 import { requireTenantPermission } from "@/server/auth/session";
 import { db } from "@/server/db";
-
-const PAGE = 100;
 
 export default async function AuditPage({ params, searchParams }: PageProps<"/[tenant]/audit">) {
   const { tenant } = await params;
   const sp = await searchParams;
   const { ctx } = await requireTenantPermission(tenant, "audit.read");
   const { timezone, locale } = ctx.tenant.settings;
-  const q = param(sp, "q").trim().slice(0, 100) || undefined;
-  const beforeRaw = param(sp, "before");
-  const before = beforeRaw && !Number.isNaN(Date.parse(beforeRaw)) ? new Date(beforeRaw) : undefined;
-
-  const rows = await listAudit(db(), ctx.tenant.id, { q, before, limit: PAGE + 1 });
-  const visible = rows.slice(0, PAGE);
-  const last = visible[visible.length - 1];
-  const older = new URLSearchParams();
-  if (q) older.set("q", q);
-  if (last) older.set("before", last.log.createdAt.toISOString());
+  const q = normaliseSearch(param(sp, "q"));
+  const page = parsePage(sp);
+  const path = tenantHref(tenant, "audit");
+  const found = await pageAudit(db(), ctx.tenant.id, { q }, page);
+  const visible = found.rows;
 
   return (
     <div className="grid gap-6">
       <PageHeader title={t("audit.title")} description={t("audit.sub")} />
-      <FilterBar>
+      <FilterBar keep={keepSize(page)}>
         <FilterSearch value={q} />
       </FilterBar>
       {visible.length === 0 ? (
-        <EmptyState title={t("audit.none")} />
+        q ? (
+          <NoResults q={q} path={path} searchParams={sp} />
+        ) : (
+          <EmptyState title={t("audit.none")} />
+        )
       ) : (
         <Table>
           <TableHeader>
@@ -92,15 +92,7 @@ export default async function AuditPage({ params, searchParams }: PageProps<"/[t
           </TableBody>
         </Table>
       )}
-      {rows.length > PAGE ? (
-        <ButtonLink
-          href={tenantHref(tenant, `audit?${older.toString()}`)}
-          variant="outline"
-          className="justify-self-center"
-        >
-          {t("audit.older")}
-        </ButtonLink>
-      ) : null}
+      <Pagination path={path} searchParams={sp} request={page} paged={found} locale={locale} />
     </div>
   );
 }

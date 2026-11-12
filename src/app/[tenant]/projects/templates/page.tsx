@@ -7,6 +7,7 @@ import {
   deleteProjectTemplateAction,
   listProjectTemplates,
   saveProjectTemplateAction,
+  templateTaskLine,
 } from "@/features/projects";
 import { t } from "@/i18n";
 import { requireTenantPermission } from "@/server/auth/session";
@@ -28,7 +29,7 @@ export default async function ProjectTemplatesPage({ params }: PageProps<"/[tena
           <TextAreaField
             name="tasks"
             label={t("projects.templateTasks")}
-            hint={t("projects.templateTasksHint")}
+            hint={t("projects.templateTasksFlagsHint")}
             rows={8}
           />
         </FormDialog>
@@ -56,11 +57,9 @@ export default async function ProjectTemplatesPage({ params }: PageProps<"/[tena
                     <TextAreaField
                       name="tasks"
                       label={t("projects.templateTasks")}
-                      hint={t("projects.templateTasksHint")}
+                      hint={t("projects.templateTasksFlagsHint")}
                       rows={8}
-                      defaultValue={tpl.tasks
-                        .map((task) => (task.clientVisible ? `${task.title} | client` : task.title))
-                        .join("\n")}
+                      defaultValue={tpl.tasks.map(templateTaskLine).join("\n")}
                     />
                   </FormDialog>
                   <ActionButton
@@ -81,6 +80,9 @@ export default async function ProjectTemplatesPage({ params }: PageProps<"/[tena
                   <li key={i} className="flex flex-wrap items-center gap-2">
                     <span>{task.title}</span>
                     {task.clientVisible ? <Badge variant="outline">{t("tasks.clientVisible")}</Badge> : null}
+                    {task.needsApproval ? (
+                      <Badge variant="secondary">{t("projects.templateApproval")}</Badge>
+                    ) : null}
                   </li>
                 ))}
               </ul>

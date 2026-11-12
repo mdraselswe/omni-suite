@@ -10,15 +10,19 @@ import { EmptyState, Section } from "@/components/layout/page";
 import { ButtonLink } from "@/components/ui/button-link";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { storedCustom } from "@/features/clients";
+import { FxRateField, transactionFx } from "@/features/finance";
 import {
   displayStatus,
   DocumentLines,
   getInvoice,
+  invoiceBalance,
   InvoiceFields,
   recordPaymentAction,
+  resendInvoiceAction,
   sendInvoiceAction,
   updateInvoiceAction,
   voidInvoiceAction,
+  writeOffAction,
 } from "@/features/invoices";
 import { t } from "@/i18n";
 import { today } from "@/lib/dates";
@@ -41,7 +45,7 @@ export default async function InvoicePage({ params }: PageProps<"/[tenant]/invoi
   const settings = ctx.tenant.settings;
   const now = today(settings.timezone);
   const shown = displayStatus(inv, now);
-  const balance = inv.totalMinor - inv.paidMinor;
+  const balance = invoiceBalance(inv);
   const canWrite = hasPermission(ctx, "invoices.write");
   const canPay =
     hasPermission(ctx, "payments.record") && (inv.status === "sent" || inv.status === "partially_paid");
@@ -51,7 +55,10 @@ export default async function InvoicePage({ params }: PageProps<"/[tenant]/invoi
   const [defs, clients, accounts, categories] = await Promise.all([
     customFieldsFor(database, ctx.tenant.id, "invoice"),
     canWrite && isDraft ? clientOptions(database, ctx.tenant.id) : Promise.resolve([]),
-    canPay ? accountOptions(database, ctx.tenant.id) : Promise.resolve([]),
+    // A payment lands in an account of the invoice's currency.
+    canPay
+      ? accountOptions(database, ctx.tenant.id).then((all) => all.filter((a) => a.currency === inv.currency))
+      : Promise.resolve([]),
     canPay ? categoryOptions(database, ctx.tenant.id) : Promise.resolve([]),
   ]);
 
@@ -108,6 +115,19 @@ export default async function InvoicePage({ params }: PageProps<"/[tenant]/invoi
               </ActionButton>
             </>
           ) : null}
+          {hasPermission(ctx, "invoices.write") &&
+          (inv.status === "sent" || inv.status === "partially_paid") &&
+          invoiceBalance(inv) > 0n ? (
+            <ActionButton
+              action={resendInvoiceAction.bind(null, tenant)}
+              values={{ id: inv.id }}
+              variant="outline"
+              size="default"
+              confirm={t("invoices.resendConfirm")}
+            >
+              {t("invoices.resend")}
+            </ActionButton>
+          ) : null}
           {canPay ? (
             <FormDialog
               trigger={t("invoices.recordPayment")}
@@ -124,6 +144,18 @@ export default async function InvoicePage({ params }: PageProps<"/[tenant]/invoi
               />
               <TextField name="date" label={t("form.date.label")} type="date" defaultValue={now} required />
               <SelectField name="accountId" label={t("finance.account")} options={accounts} required />
+              {inv.currency !== settings.currency ? (
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    {t("invoices.payRateHint", { currency: inv.currency, base: settings.currency })}
+                  </p>
+                  <FxRateField
+                    fx={transactionFx(ctx, tenant)}
+                    currency={inv.currency}
+                    amount={toDecimalString(balance, inv.currency)}
+                  />
+                </>
+              ) : null}
               <TextField name="method" label={t("invoices.method")} placeholder={t("invoices.methodHint")} />
               <SelectField
                 name="categoryId"
@@ -133,6 +165,19 @@ export default async function InvoicePage({ params }: PageProps<"/[tenant]/invoi
                   .map((c) => ({ value: c.value, label: c.name }))}
                 placeholder={t("form.none")}
               />
+            </FormDialog>
+          ) : null}
+          {canPay && balance > 0n ? (
+            <FormDialog
+              trigger={t("invoices.writeOff")}
+              title={t("invoices.writeOffTitle", { amount: f.money(balance, inv.currency) })}
+              description={t("invoices.writeOffBody")}
+              action={writeOffAction.bind(null, tenant)}
+              variant="ghost"
+              icon={false}
+            >
+              <input type="hidden" name="id" value={inv.id} />
+              <TextField name="reason" label={t("invoices.writeOffReason")} />
             </FormDialog>
           ) : null}
           {inv.status !== "draft" ? (
@@ -169,7 +214,9 @@ export default async function InvoicePage({ params }: PageProps<"/[tenant]/invoi
             >
               {client.name}
             </Link>
-            {client.email ? <p className="text-sm text-muted-foreground">{client.email}</p> : null}
+            {client.billingEmail || client.email ? (
+              <p className="text-sm text-muted-foreground">{client.billingEmail || client.email}</p>
+            ) : null}
             {client.address ? (
               <p className="text-sm whitespace-pre-line text-muted-foreground">{client.address}</p>
             ) : null}
@@ -202,7 +249,7 @@ export default async function InvoicePage({ params }: PageProps<"/[tenant]/invoi
           items={inv.items}
           currency={inv.currency}
           locale={settings.locale}
-          pricesIncludeTax={settings.tax.pricesIncludeTax}
+          pricesIncludeTax={inv.pricesIncludeTax}
           taxName={settings.tax.name}
           totals={inv}
           extra={
@@ -210,6 +257,9 @@ export default async function InvoicePage({ params }: PageProps<"/[tenant]/invoi
               ? []
               : [
                   { label: t("invoices.paid"), amount: inv.paidMinor },
+                  ...(inv.writtenOffMinor > 0n
+                    ? [{ label: t("invoices.writtenOff"), amount: inv.writtenOffMinor }]
+                    : []),
                   { label: t("invoices.balance"), amount: balance, strong: true },
                 ]
           }
@@ -232,12 +282,21 @@ export default async function InvoicePage({ params }: PageProps<"/[tenant]/invoi
             </TableHeader>
             <TableBody>
               {payments.map((p) => (
-                <TableRow key={p.id}>
+                <TableRow key={p.id} className={p.reversedAt ? "text-muted-foreground" : undefined}>
                   <TableCell>{f.date(p.date)}</TableCell>
                   <TableCell>
                     {p.method === "stripe" ? t("payments.method.stripe") : p.method || "—"}
+                    {p.reversedAt ? (
+                      <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-xs">
+                        {t("invoices.paymentReversed")}
+                      </span>
+                    ) : null}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">
+                  <TableCell
+                    className={
+                      p.reversedAt ? "text-right tabular-nums line-through" : "text-right tabular-nums"
+                    }
+                  >
                     {f.money(p.amountMinor, inv.currency)}
                   </TableCell>
                 </TableRow>

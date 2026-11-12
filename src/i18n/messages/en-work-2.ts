@@ -1,7 +1,5 @@
 /** UI text for leads, clients, projects, time and files (added in the project review). */
 export const enWork2 = {
-  "list.loadMore": "Show more",
-
   "leads.otherStage": "Other stage",
   "leads.otherStageHint":
     "These leads are in a stage that is no longer in the pipeline. Move them to a current stage.",

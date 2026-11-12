@@ -15,6 +15,7 @@ export default async function InvoicesLayout({ children, params }: LayoutProps<"
           items={[
             { href: tenantHref(tenant, "invoices"), label: t("invoices.title"), exact: true },
             { href: tenantHref(tenant, "invoices/recurring"), label: t("invoices.recurring") },
+            { href: tenantHref(tenant, "invoices/aged"), label: t("aged.title") },
           ]}
         />
       </div>
