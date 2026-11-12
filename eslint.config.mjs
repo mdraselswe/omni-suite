@@ -54,6 +54,7 @@ export default defineConfig([
   },
   globalIgnores([
     ".next/**",
+    ".claude/**",
     "out/**",
     "build/**",
     "coverage/**",

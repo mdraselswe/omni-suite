@@ -104,6 +104,30 @@ test.describe("owner", () => {
     }
   });
 
+  test("the ledger pages with numbered links and searches as you type", async ({ page }) => {
+    await page.goto("/demo/finance/?size=25");
+    const pager = page.getByRole("navigation", { name: "Pagination" });
+    await expect(pager).toBeVisible();
+    await expect(pager.getByText(/^Showing 1–\d+ of \d+/)).toBeVisible();
+    await expect(pager.getByLabel("Rows per page")).toHaveValue("25");
+    const next = pager.getByRole("link", { name: "Next page" });
+    if ((await next.count()) > 0) {
+      await next.click();
+      await expect(page).toHaveURL(/[?&]page=2/);
+      await expect(pager.getByText(/^Showing 26–/)).toBeVisible();
+      await expect(pager.locator("[aria-current=page]")).toHaveText("2");
+    }
+    await expectAccessible(page);
+
+    await page.getByRole("searchbox", { name: "Search" }).fill("zzz no such entry");
+    await expect(page).toHaveURL(/[?&]q=zzz\+no\+such\+entry/);
+    await expect(page).not.toHaveURL(/[?&]page=/);
+    await expect(page.getByText("No results for “zzz no such entry”")).toBeVisible();
+    await page.getByRole("link", { name: "Clear search" }).click();
+    await expect(page).not.toHaveURL(/[?&]q=/);
+    await expect(pager).toBeVisible();
+  });
+
   test("records an expense and sees it in the ledger", async ({ page }) => {
     await page.goto("/demo/finance/");
     const description = `E2E expense ${Date.now()}`;

@@ -41,6 +41,8 @@ services:
     environment:
       APP_HOST: ${APP_HOST:?set APP_HOST}
       ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL}
+      # Same value as DOMAIN_CHECK_SECRET in .env.production (see .env.example).
+      DOMAIN_CHECK_SECRET: ${DOMAIN_CHECK_SECRET:-}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

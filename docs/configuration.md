@@ -10,9 +10,13 @@ Everything project-specific lives in a few files. A new project changes these, n
 | Colour presets (brand colour, gradients, chart colours)             | `src/config/themes.ts`                             | contrast unit test           |
 | Contact, social links, SEO title/keywords                           | `src/config/site.ts`                               | zod                          |
 | Feature switches (PWA, install card, offline banner, theme toggle)  | `src/config/features.ts`                           | zod                          |
+| AI providers, models, per-feature overrides, daily AI limit         | `src/config/ai.ts` (keys in `src/config/env.ts`)   | zod (`aiSchema`)             |
+| List page sizes, default page size, search delay, board column size | `src/config/lists.ts`                              | zod (`listsSchema`)          |
+| Mail quotas, storage quota per business, sign-in throttle per email | `src/config/limits.ts`                             | zod (`limitsSchema`)         |
 | Fonts                                                               | `src/config/fonts.ts`                              | TypeScript                   |
 | Routes (internal links) and sitemap pages                           | `src/config/routes.ts`                             | `typedRoutes`                |
 | Header/footer links                                                 | `src/config/navigation.ts`                         | TypeScript (i18n keys)       |
+| Number formats, time zone → currency guesses, exchange-rate source  | `src/config/regional.ts` (+ env `FX_PROVIDER`)     | zod (`regionalSchema`)       |
 | UI text, labels, errors                                             | `src/i18n/messages/en.ts`                          | typed keys                   |
 | Page content (hero, lists, data)                                    | `src/content/*.ts`                                 | TypeScript                   |
 | Environment variables                                               | `src/config/env.ts` + `.env.example`               | zod                          |
@@ -50,3 +54,18 @@ Switch with `pnpm mode static` or `pnpm mode server`. CI builds both modes, so c
 2. Set it in `site.ts` or `features.ts`.
 3. Read it through `import { site, features } from "@/config"`.
 4. Document it in this table.
+
+## AI providers
+
+Claude (`anthropic`) is the default and the only provider with a key today. Every AI call goes through `src/server/ai/`: a feature (`proposalDraft`, `insights`) asks the registry, which picks the provider and model from `src/config/ai.ts` and returns text plus token counts. The daily allowance, token recording and error messages in `src/features/ai/run.ts` are the same for every provider.
+
+- **Switch everything:** set `defaultProvider` in `src/config/ai.ts` and that provider's key in env.
+- **Switch one feature:** add an override, e.g. `features: { insights: { model: "claude-haiku-5-5" } }` (cheaper Claude model) or `features: { proposalDraft: { provider: "openai-compatible", model: "gpt-5-mini" } }`. Leave out `provider` to keep the default one; leave out `model` to use the provider's own.
+- **OpenAI-style services** (OpenAI, OpenRouter, Groq, DeepSeek, Ollama, Gemini's OpenAI endpoint): set `providers["openai-compatible"].baseUrl` and `model`, put the key in `OPENAI_COMPATIBLE_API_KEY` (any value for a local Ollama). If the service doesn't support strict JSON schemas, set `jsonMode` to `"json_object"` or `"none"`; if it rejects `max_completion_tokens`, set `tokenLimitParam` to `"max_tokens"`.
+- A feature is hidden (and its action refuses) until the provider it uses has a key.
+
+**Adding a new kind of provider** (one that isn't OpenAI-compatible):
+
+1. Write `src/server/ai/<name>.ts` that returns an `AiProvider` (`complete(request)` → `{ text, inputTokens, outputTokens, model }`; throw `AiNoAnswerError` for a refusal or cut-off, `AiProviderError` for HTTP failures, never with the prompt in the message). Add a unit test with a mocked client or `fetch`.
+2. Add its id to `AI_PROVIDERS` and its settings under `providers` in `aiSchema` (`src/config/schema.ts`), then fill them in `src/config/ai.ts`.
+3. Add its key to `serverSchema` in `src/config/env.ts` (empty default) and `.env.example`, and register the factory and key name in `src/server/ai/registry.ts`.

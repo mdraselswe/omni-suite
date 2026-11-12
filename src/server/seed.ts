@@ -2,21 +2,29 @@ import "server-only";
 import { and, eq } from "drizzle-orm";
 import { hashPassword } from "better-auth/crypto";
 import { DEMO_ACCOUNTS, DEMO_PASSWORD } from "@/features/auth";
-import { createClient, listTemplates, sendOnboarding } from "@/features/clients";
-import { createLead } from "@/features/crm";
-import { createAccount, createTransaction, listCategories } from "@/features/finance";
-import { createInvoice, createRecurring, recordPayment, sendInvoice } from "@/features/invoices";
+import { createClient, listTemplates, sendOnboarding, submitOnboarding } from "@/features/clients";
+import { convertLead, createLead, setLeadArchived } from "@/features/crm";
+import {
+  closePeriod,
+  createAccount,
+  createTransaction,
+  listCategories,
+  reverseTransaction,
+} from "@/features/finance";
+import { createInvoice, createRecurring, recordPayment, sendInvoice, voidInvoice } from "@/features/invoices";
 import {
   createPartner,
   decideRule,
   proposeRule,
   recordCapital,
+  saveDistribution,
   setInitialOwnership,
 } from "@/features/partners";
 import {
   addComment,
   createProject,
   createTask,
+  invoiceUnbilledTime,
   listProjectTemplates,
   listTasks,
   logTime,
@@ -25,11 +33,11 @@ import {
   updateTask,
 } from "@/features/projects";
 import { createProposal, invoiceFromProposal, respondToProposal, sendProposal } from "@/features/proposals";
-import { addDays, addMonths, monthStart, today as todayIn } from "@/lib/dates";
+import { addDays, addMonths, monthEnd, monthStart, today as todayIn } from "@/lib/dates";
 import { uuidv7 } from "@/lib/ids";
 import type { LineItem } from "@/lib/line-items";
 import type { Database, DbOrTx } from "@/server/db";
-import { account, memberRoles, memberships, roles, tenants, user } from "@/server/db/schema";
+import { account, memberRoles, memberships, proposals, roles, tenants, user } from "@/server/db/schema";
 import { bumpPermissionsVersion } from "@/server/rbac/service";
 import type { TenantContext } from "@/server/tenancy/context";
 import { buildTenantContext, createTenant } from "@/server/tenancy/service";
@@ -120,6 +128,17 @@ export async function seed(
   const tz = options.timezone ?? "Australia/Sydney";
   const today = todayIn(tz);
 
+  /*
+   * Demo sign-ins only while the demo business is being created (never re-created
+   * later with the known password), and before the admins: an admin email that is
+   * also a demo sign-in (owner@demo.test) keeps its demo name and password.
+   */
+  const demoExists = await tenantExists(database, DEMO_SLUG);
+  const ids: Record<string, string> = {};
+  if (!demoExists) {
+    for (const a of DEMO_ACCOUNTS) ids[a.email] = await ensureUser(database, a.email, a.name, DEMO_PASSWORD);
+  }
+
   const adminIds: string[] = [];
   for (const email of options.adminEmails)
     adminIds.push(await ensureUser(database, email, email.split("@")[0] ?? email));
@@ -132,11 +151,8 @@ export async function seed(
     }
   }
 
-  if (await tenantExists(database, DEMO_SLUG)) return result;
+  if (demoExists) return result;
   result.demo = "created";
-
-  const ids: Record<string, string> = {};
-  for (const a of DEMO_ACCOUNTS) ids[a.email] = await ensureUser(database, a.email, a.name, DEMO_PASSWORD);
   const uid = (email: string) => {
     const id = ids[email];
     if (!id) throw new Error(`Seed: missing ${email}`);
@@ -160,8 +176,11 @@ export async function seed(
     accountant: await addMembership(tx, tenantId, uid("accountant@demo.test"), "accountant", {
       title: "Bookkeeper",
     }),
+    // A platform admin who is also a demo sign-in (e.g. owner@demo.test) is already a member.
     admins: await Promise.all(
-      adminIds.map((id) => addMembership(tx, tenantId, id, "owner", { title: "Platform owner" })),
+      adminIds
+        .filter((id) => !Object.values(ids).includes(id))
+        .map((id) => addMembership(tx, tenantId, id, "owner", { title: "Platform owner" })),
     ),
   }));
 
@@ -223,17 +242,40 @@ export async function seed(
   });
   await decideRule(database, partnerCtx, { ruleId, partnerId: pB, decision: "approved" });
 
+  /*
+   * Where the money lives: the AUD business bank, a BDT account for the Dhaka team
+   * (salaries and rent are paid in taka) and a USD card for overseas software.
+   */
+  const dhaka = await createAccount(database, owner, {
+    name: "Dhaka office (BDT)",
+    type: "bank",
+    currency: "BDT",
+    openingBalanceMinor: 0n,
+  });
+  const usdCard = await createAccount(database, owner, {
+    name: "Company card (USD)",
+    type: "card",
+    currency: "USD",
+    openingBalanceMinor: 0n,
+  });
+  /** Sample rates: AUD per one unit of the other currency. */
+  const AUD_PER_BDT = "0.0128";
+  const AUD_PER_USD = "1.52";
+  /** GST inside a GST-inclusive Australian price (1/11th), in cents. */
+  const gstOf = (dollars: number) => BigInt(Math.round((dollars * 100) / 11));
+
   /* Monthly running costs for the last 8 months. */
   for (let k = 7; k >= 0; k--) {
     const day = addDays(monthStart(addMonths(today, -k)), 2);
     if (day > today) continue;
-    const spend: [string, string, number][] = [
-      ["Software & tools", "Hosting, design and email tools", 189],
-      ["Advertising", "Google & Meta ads", k % 2 === 0 ? 650 : 420],
-      ["Contractors", "Freelance copywriter", k % 3 === 0 ? 900 : 0],
-      ["Bank fees", "Monthly account fee", 10],
+    // Australian costs: [category, description, dollars incl. GST, has GST]
+    const spend: [string, string, number, boolean][] = [
+      ["Software & tools", "Hosting, design and email tools", 189, true],
+      ["Advertising", "Google & Meta ads", k % 2 === 0 ? 650 : 420, true],
+      ["Contractors", "Freelance copywriter (not registered for GST)", k % 3 === 0 ? 900 : 0, false],
+      ["Bank fees", "Monthly account fee", 10, false],
     ];
-    for (const [category, description, dollars] of spend) {
+    for (const [category, description, dollars, gst] of spend) {
       if (dollars === 0) continue;
       await createTransaction(database, owner, {
         kind: "expense",
@@ -242,92 +284,292 @@ export async function seed(
         date: day,
         description,
         amountMinor: BigInt(dollars * 100),
+        taxMinor: gst ? gstOf(dollars) : 0n,
+      });
+    }
+    // Send taka to Dhaka, then pay the team and the office rent from there.
+    if (addDays(day, 25) <= today) {
+      await createTransaction(database, owner, {
+        kind: "transfer",
+        accountId: bank,
+        toAccountId: dhaka,
+        date: addDays(day, 20),
+        description: "Monthly transfer to Dhaka (Wise)",
+        amountMinor: 120_000n,
+        toAmountMinor: 9_250_000n,
+      });
+      await createTransaction(database, owner, {
+        kind: "expense",
+        accountId: dhaka,
+        categoryId: cat("Salaries"),
+        date: addDays(day, 25),
+        description: "Salaries: 2 developers, 1 designer",
+        amountMinor: 7_500_000n,
+        fxRate: AUD_PER_BDT,
+      });
+      await createTransaction(database, owner, {
+        kind: "expense",
+        accountId: dhaka,
+        categoryId: cat("Rent"),
+        date: addDays(day, 25),
+        description: "Office rent, Dhanmondi",
+        amountMinor: 1_500_000n,
+        fxRate: AUD_PER_BDT,
+      });
+    }
+    // Overseas software on the USD card (no GST), paid off from the bank the next month.
+    if (addDays(day, 5) <= today) {
+      await createTransaction(database, owner, {
+        kind: "expense",
+        accountId: usdCard,
+        categoryId: cat("Software & tools"),
+        date: addDays(day, 5),
+        description: "Figma and GitHub (USD)",
+        amountMinor: 6_500n,
+        fxRate: AUD_PER_USD,
+      });
+    }
+    if (addDays(day, 26) <= today) {
+      await createTransaction(database, owner, {
+        kind: "transfer",
+        accountId: bank,
+        toAccountId: usdCard,
+        date: addDays(day, 26),
+        description: "Pay off the USD card",
+        amountMinor: 9_900n,
+        toAmountMinor: 6_500n,
       });
     }
   }
 
-  /* Clients */
-  const clientInput = (name: string, email: string, website: string, address: string) => ({
-    name,
-    email,
-    phone: "0400 000 000",
-    website,
-    address,
-    notes: "Sample client",
-    status: "active" as const,
-    custom: {},
+  /* A mistake fixed the right way: entered twice, then reversed (the ledger keeps both rows). */
+  const twice = await createTransaction(database, owner, {
+    kind: "expense",
+    accountId: bank,
+    categoryId: cat("Bank fees"),
+    date: addDays(today, -12),
+    description: "Monthly account fee (entered twice)",
+    amountMinor: 1_000n,
   });
+  await reverseTransaction(database, owner, twice, addDays(today, -11), "Entered twice by mistake");
+
+  /* Clients (sample businesses; .example addresses never receive mail). */
+  const clientInput = (c: {
+    name: string;
+    contactName: string;
+    email: string;
+    billingEmail?: string;
+    phone: string;
+    website: string;
+    address: string;
+    notes: string;
+  }) => ({ billingEmail: "", status: "active" as const, custom: {}, ...c });
   const cafe = await createClient(
     database,
     owner,
-    clientInput("Harbour Cafe", "hello@harbourcafe.example", "harbourcafe.example", "1 Wharf St, Sydney NSW"),
+    clientInput({
+      name: "Harbour Cafe",
+      contactName: "Jack Wilson",
+      email: "jack@harbourcafe.example",
+      billingEmail: "accounts@harbourcafe.example",
+      phone: "02 9000 1001",
+      website: "https://harbourcafe.example",
+      address: "1 Wharf St, Sydney NSW 2000",
+      notes: "Care plan client since autumn. Uses the portal: approvals, files and invoices.",
+    }),
   );
   const plumbing = await createClient(
     database,
     owner,
-    clientInput(
-      "Coastal Plumbing",
-      "jobs@coastalplumbing.example",
-      "coastalplumbing.example",
-      "Wollongong NSW",
-    ),
+    clientInput({
+      name: "Coastal Plumbing",
+      contactName: "Sam Nguyen",
+      email: "sam@coastalplumbing.example",
+      phone: "0412 000 202",
+      website: "https://coastalplumbing.example",
+      address: "Wollongong NSW 2500",
+      notes: "New website project from the accepted proposal (50% deposit paid).",
+    }),
   );
   const fitness = await createClient(
     database,
     owner,
-    clientInput("Bondi Fitness Studio", "team@bondifit.example", "bondifit.example", "Bondi NSW"),
+    clientInput({
+      name: "Bondi Fitness Studio",
+      contactName: "Jordan Lee",
+      email: "jordan@bondifit.example",
+      billingEmail: "billing@bondifit.example",
+      phone: "0413 000 303",
+      website: "https://bondifit.example",
+      address: "Bondi NSW 2026",
+      notes: "Social media retainer, plus hourly ad campaign work.",
+    }),
   );
   const dental = await createClient(
     database,
     owner,
-    clientInput("Koala Dental", "admin@koaladental.example", "", "Parramatta NSW"),
+    clientInput({
+      name: "Koala Dental",
+      contactName: "Dr Priya Shah",
+      email: "priya@koaladental.example",
+      phone: "02 9000 4004",
+      website: "",
+      address: "Parramatta NSW 2150",
+      notes: "Prospect: booking website proposal is out.",
+    }),
   );
-  await database.transaction((tx) =>
-    addMembership(tx, tenantId, uid("client@demo.test"), "client_owner", { kind: "client", clientId: cafe }),
-  );
+  // The cafe owner sees everything in the portal; their team member sees work and files, not money.
+  await database.transaction(async (tx) => {
+    await addMembership(tx, tenantId, uid("client@demo.test"), "client_owner", {
+      kind: "client",
+      clientId: cafe,
+    });
+    await addMembership(tx, tenantId, uid("clientstaff@demo.test"), "client_member", {
+      kind: "client",
+      clientId: cafe,
+    });
+  });
 
-  /* Leads */
-  const leads: [string, string, string, number][] = [
-    ["Mia Chen", "Sunrise Bakery", "new", 2500],
-    ["Liam Brown", "Brown Electrical", "call", 4000],
-    ["Olivia Smith", "Smith Legal", "proposal", 8500],
-    ["Noah Taylor", "Taylor Physio", "pilot", 3000],
-    ["Emma Davis", "Davis Florist", "won", 1800],
-  ];
-  for (const [name, company, stage, dollars] of leads) {
-    await createLead(database, owner, {
-      name,
-      company,
-      email: `${name.split(" ")[0]?.toLowerCase() ?? "lead"}@example.com`,
-      phone: "",
+  /* Leads: real-looking sources, owners and follow-ups; one won and converted, one lost, one archived. */
+  const leadRows: {
+    name: string;
+    company: string;
+    stage: string;
+    dollars: number;
+    source: string;
+    owner: string | null;
+    followUp: number | null;
+    notes: string;
+  }[] = [
+    {
+      name: "Ava Chen",
+      company: "Sunrise Bakery",
+      stage: "new",
+      dollars: 2500,
       source: "Website form",
-      stage,
-      valueMinor: BigInt(dollars * 100),
+      owner: m.manager,
+      followUp: 0,
+      notes: "Wants online orders before Christmas.",
+    },
+    {
+      name: "Liam Brown",
+      company: "Brown Electrical",
+      stage: "call",
+      dollars: 4000,
+      source: "Referral (Coastal Plumbing)",
+      owner: m.manager,
+      followUp: -2,
+      notes: "Call booked; send examples of trade sites first.",
+    },
+    {
+      name: "Olivia Smith",
+      company: "Smith Legal",
+      stage: "proposal",
+      dollars: 8500,
+      source: "Google Ads",
+      owner: owner.membership.id,
+      followUp: 3,
+      notes: "Proposal sent; decision after their partners' meeting.",
+    },
+    {
+      name: "Noah Taylor",
+      company: "Taylor Physio",
+      stage: "pilot",
+      dollars: 3000,
+      source: "Networking event",
+      owner: m.manager,
+      followUp: 7,
+      notes: "Free 30-day pilot running (Google Business Profile).",
+    },
+    {
+      name: "Grace Kim",
+      company: "Kim's Kitchen",
+      stage: "new",
+      dollars: 1500,
+      source: "Facebook",
+      owner: m.staff,
+      followUp: null,
       notes: "",
-      ownerMembershipId: null,
+    },
+    {
+      name: "Ethan Wright",
+      company: "Wright Builders",
+      stage: "lost",
+      dollars: 6000,
+      source: "Website form",
+      owner: m.manager,
+      followUp: null,
+      notes: "Went with a cheaper quote.",
+    },
+    {
+      name: "Emma Davis",
+      company: "Davis Florist",
+      stage: "won",
+      dollars: 1800,
+      source: "Referral (Harbour Cafe)",
+      owner: owner.membership.id,
+      followUp: null,
+      notes: "Won: starts next month.",
+    },
+    {
+      name: "Test Enquiry",
+      company: "",
+      stage: "new",
+      dollars: 0,
+      source: "Website form",
+      owner: null,
+      followUp: null,
+      notes: "Spam",
+    },
+  ];
+  const leadIds: Record<string, string> = {};
+  for (const l of leadRows) {
+    leadIds[l.name] = await createLead(database, owner, {
+      name: l.name,
+      company: l.company,
+      email: l.company
+        ? `${l.name.split(" ")[0]?.toLowerCase() ?? "hello"}@${l.company.toLowerCase().replace(/[^a-z]/g, "")}.example`
+        : "",
+      phone: l.company ? "0400 000 000" : "",
+      source: l.source,
+      stage: l.stage,
+      valueMinor: BigInt(l.dollars * 100),
+      notes: l.notes,
+      followUpDate: l.followUp === null ? null : addDays(today, l.followUp),
+      ownerMembershipId: l.owner,
       custom: {},
     });
   }
+  const wonLead = leadIds["Emma Davis"];
+  if (wonLead) await convertLead(database, owner, "all", wonLead);
+  const spamLead = leadIds["Test Enquiry"];
+  if (spamLead) await setLeadArchived(database, owner, "all", spamLead, true);
 
-  /* Monthly retainer invoices for the cafe, all paid. */
-  for (let k = 5; k >= 1; k--) {
-    const issue = monthStart(addMonths(today, -k));
-    const id = await createInvoice(database, owner, {
-      clientId: cafe,
-      issueDate: issue,
-      dueDate: addDays(issue, 14),
-      items: [item("Website care & SEO retainer", "1", 1500)],
-      notes: "",
-      custom: {},
-    });
-    await sendInvoice(database, owner, id);
-    await recordPayment(database, owner, id, {
-      amountMinor: 165_000n,
-      date: addDays(issue, 9),
-      accountId: bank,
-      method: "Bank transfer",
-      categoryId: cat("Retainers"),
-    });
+  /* Monthly retainers, all paid: the cafe since month 5, the gym's social media since month 7. */
+  const retainers: [string, string, number, number][] = [
+    [cafe, "Website care & SEO retainer", 1500, 5],
+    [fitness, "Social media management", 1800, 7],
+  ];
+  for (const [clientId, description, dollars, months] of retainers) {
+    for (let k = months; k >= 1; k--) {
+      const issue = monthStart(addMonths(today, -k));
+      const id = await createInvoice(database, owner, {
+        clientId,
+        issueDate: issue,
+        dueDate: addDays(issue, 14),
+        items: [item(description, "1", dollars)],
+        notes: "",
+        custom: {},
+      });
+      await sendInvoice(database, owner, id);
+      await recordPayment(database, owner, id, {
+        amountMinor: BigInt(dollars * 110),
+        date: addDays(issue, 9),
+        accountId: bank,
+        method: "Bank transfer",
+        categoryId: cat("Retainers"),
+      });
+    }
   }
 
   /* Proposal accepted by Coastal Plumbing → invoice, half paid. */
@@ -340,7 +582,13 @@ export async function seed(
     validUntil: addDays(today, 30),
   });
   await sendProposal(database, owner, proposal);
-  await respondToProposal(database, owner, proposal, { accept: true, name: "Sam Coastal", ip: "", today });
+  await respondToProposal(database, owner, proposal, {
+    accept: true,
+    acceptTerms: true,
+    name: "Sam Coastal",
+    ip: "",
+    today,
+  });
   const projectInvoice = await invoiceFromProposal(database, owner, proposal, addDays(today, -20));
   await sendInvoice(database, owner, projectInvoice);
   await recordPayment(database, owner, projectInvoice, {
@@ -465,8 +713,166 @@ export async function seed(
     });
   }
 
+  /*
+   * Onboarding: the cafe filled in its form in the portal (the team now works the
+   * checklist); the gym has no portal login yet, so the form went with an invitation.
+   */
   const [onboarding] = await listTemplates(database, tenantId);
-  if (onboarding) await sendOnboarding(database, owner, { clientId: fitness, templateId: onboarding.id });
+  if (onboarding) {
+    const cafeForm = await sendOnboarding(database, owner, { clientId: cafe, templateId: onboarding.id });
+    const cafeUser = await contextFor(database, DEMO_SLUG, uid("client@demo.test"));
+    await submitOnboarding(database, cafeUser, cafeForm.id, {
+      business: "Harbour Cafe",
+      goals: "More weekday lunch orders and a menu that is easy to update ourselves.",
+      audience: "Office workers near the wharf, weekend families and tourists.",
+      brand: "Logo and photos are in the Files tab.",
+      website: "https://harbourcafe.example",
+    });
+    await sendOnboarding(database, owner, {
+      clientId: fitness,
+      templateId: onboarding.id,
+      inviteEmail: "jordan@bondifit.example",
+    });
+  }
+
+  /* What the cafe sees in the portal: this month's bill, one late invoice, and proposals in every state. */
+  const cafeThisMonth = await createInvoice(database, owner, {
+    clientId: cafe,
+    issueDate: monthStart(today),
+    dueDate: addDays(monthStart(today), 14),
+    items: [item("Website care & SEO retainer", "1", 1500)],
+    notes: "",
+    custom: {},
+  });
+  await sendInvoice(database, owner, cafeThisMonth);
+  const cafeLate = await createInvoice(database, owner, {
+    clientId: cafe,
+    issueDate: addDays(today, -35),
+    dueDate: addDays(today, -21),
+    items: [item("Menu photography (half day)", "1", 450)],
+    notes: "",
+    custom: {},
+  });
+  await sendInvoice(database, owner, cafeLate);
+  const cafeProposal = (title: string, dollars: number, validDays: number) =>
+    createProposal(database, owner, {
+      clientId: cafe,
+      title,
+      intro: "Short and simple, as discussed.",
+      terms: "Payment within 14 days of the invoice.",
+      items: [item(title, "1", dollars)],
+      validUntil: addDays(today, validDays),
+    });
+  const ordering = await cafeProposal("Online ordering add-on", 1200, 14);
+  await sendProposal(database, owner, ordering);
+  const loyalty = await cafeProposal("Loyalty app", 5200, 30);
+  await sendProposal(database, owner, loyalty);
+  await respondToProposal(database, owner, loyalty, {
+    accept: false,
+    name: "Jack Wilson",
+    ip: "",
+    today,
+    reason: "Too much for us this year. Maybe next spring.",
+  });
+  const catering = await cafeProposal("Catering page refresh", 600, 1);
+  await sendProposal(database, owner, catering);
+  // Left unanswered past its date: shows as Expired; staff can extend it.
+  await database
+    .update(proposals)
+    .set({ validUntil: addDays(today, -3) })
+    .where(eq(proposals.id, catering));
+
+  /* A mistake on a draft, voided (kept for the record, never owed). */
+  const duplicate = await createInvoice(database, owner, {
+    clientId: dental,
+    issueDate: addDays(today, -9),
+    dueDate: addDays(today, 5),
+    items: [item("Google Business Profile setup (duplicate)", "1", 450)],
+    notes: "Raised twice by mistake",
+    custom: {},
+  });
+  await sendInvoice(database, owner, duplicate);
+  await voidInvoice(database, owner, duplicate);
+
+  /* Hourly work: ad campaigns for the gym, half the time already invoiced. */
+  const ads = await createProject(database, owner, {
+    name: "Bondi Fitness ad campaigns (hourly)",
+    description: "Meta and Google ads, billed by the hour.",
+    clientId: fitness,
+    status: "active",
+    startDate: addDays(today, -30),
+    dueDate: null,
+    budgetMinor: 0n,
+    custom: {},
+    templateId: null,
+  });
+  await setProjectMember(database, owner, { projectId: ads, membershipId: m.staff, add: true });
+  for (let i = 0; i < 8; i++) {
+    await logTime(database, staffCtx, "own", {
+      projectId: ads,
+      taskId: null,
+      membershipId: null,
+      date: addDays(today, -28 + i * 3),
+      minutes: 90,
+      note: i % 2 ? "Campaign reporting" : "Ad creative and set-up",
+      billable: true,
+    });
+    if (i === 3) {
+      const timeInvoice = await invoiceUnbilledTime(database, owner, "all", ads, addDays(today, -16));
+      await sendInvoice(database, owner, timeInvoice);
+    }
+  }
+
+  /* A finished project, every task done. */
+  const brand = await createProject(database, owner, {
+    name: "Bondi Fitness brand refresh",
+    description: "New logo, colours and social templates.",
+    clientId: fitness,
+    status: "done",
+    startDate: addDays(today, -150),
+    dueDate: addDays(today, -110),
+    budgetMinor: 250_000n,
+    custom: {},
+    templateId: null,
+  });
+  for (const title of ["Mood board", "Logo options", "Social templates"]) {
+    await createTask(database, owner, "all", brand, {
+      title,
+      description: "",
+      status: "done",
+      assigneeMembershipId: m.staff,
+      dueDate: null,
+      clientVisible: true,
+      needsApproval: false,
+    });
+  }
+
+  /*
+   * Partners: last quarter's profit split is final, both partners took a draw, and
+   * the older months are closed (their numbers can no longer change).
+   */
+  const quarterStart = monthStart(addMonths(today, -3));
+  const quarterEnd = monthEnd(addMonths(today, -1));
+  await saveDistribution(database, owner, {
+    start: quarterStart,
+    end: quarterEnd,
+    manualLabor: {},
+    final: true,
+  });
+  for (const [partnerId, dollars] of [
+    [pA, 900],
+    [pB, 600],
+  ] as const) {
+    await createTransaction(database, owner, {
+      kind: "drawing",
+      accountId: bank,
+      partnerId,
+      date: addDays(today, -6),
+      description: "Profit draw for last quarter",
+      amountMinor: BigInt(dollars * 100),
+    });
+  }
+  await closePeriod(database, owner, { startDate: start, endDate: monthEnd(addMonths(today, -4)) });
 
   return result;
 }

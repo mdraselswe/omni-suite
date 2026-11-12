@@ -24,6 +24,7 @@
 4. [ইমেইল: একদম শুরু থেকে](#4-ইমেইল-একদম-শুরু-থেকে)
 5. [ব্যাকআপ](#5-ব্যাকআপ)
 6. [Stripe, Xero ও AI (Phase 7)](#6-stripe-xero-ও-ai-phase-7)
+7. [BDT, USD আর AUD-এ কেনাকাটা লেখা](#7-bdt-usd-আর-aud-এ-কেনাকাটা-লেখা)
 
 ---
 
@@ -378,7 +379,15 @@ NEXT_PUBLIC_WEB3FORMS_KEY=<WEB3FORMS_ACCESS_KEY>
 - ক্লায়েন্ট পোর্টাল ইনভাইট
 - ইমেইল যাচাই আর পাসওয়ার্ড রিসেট (email + password লগইনের জন্য)
 - ক্লায়েন্টকে ইনভয়েস আর প্রপোজাল পাঠানো
+- বকেয়া ইনভয়েসের পেমেন্ট রিমাইন্ডার (নিজে থেকে, প্রতিদিন চেক করে)
 - নোটিফিকেশন
+
+### বিজনেসের নামে পাঠানো আর রিপ্লাই
+
+- ক্লায়েন্টকে পাঠানো ইমেইলে প্রেরকের নাম হয় বিজনেসের নাম (যেমন "Harbour Studio <no-reply@omniscopedigital.com>")। ঠিকানা সবসময় `MAIL_FROM`-এরটাই থাকে, কারণ শুধু verified ডোমেইন থেকেই পাঠানো যায়।
+- **Settings → General → Reply-to email:** এখানে বিজনেসের নিজের ইমেইল দিলে ক্লায়েন্ট "Reply" চাপলে উত্তর সেখানে যায়। খালি রাখলে উত্তর `no-reply`-তে যায়, মানে কেউ পায় না।
+- **Settings → General → Payment reminders:** ডিফল্ট হলো due date-এর ৩ দিন আগে একটা, তারপর ১, ৭ আর ১৪ দিন পরে একটা করে। বন্ধ করা যায়, দিন বদলানো যায়। পেমেন্ট পুরো হলে, write off বা void করলে রিমাইন্ডার নিজে থেকে থেমে যায়। ইনভয়েস পেজের **Send reminder** বাটন দিয়ে হাতেও পাঠানো যায়।
+- রিমাইন্ডার যায় ক্লায়েন্টের পোর্টাল ইউজারদের কাছে (যাদের ইনভয়েস দেখার অনুমতি আছে)। পোর্টাল ইউজার না থাকলে যায় ক্লায়েন্টের **Billing email**-এ (না থাকলে মূল ইমেইলে)।
 
 ### লোকালে বনাম লাইভে
 
@@ -670,7 +679,7 @@ docker compose -f docker-compose.prod.yml cp ./files/. app:/app/storage/
 1. business-এর মালিক stripe.com-এ অ্যাকাউন্ট খোলেন (Australia, business details, bank account)। প্রথমে **Test mode**-এ চেষ্টা করুন।
 2. Stripe Dashboard → **Developers → API keys** → secret key কপি করুন (`sk_test_…`)। আরও নিরাপদ: **Create restricted key** → শুধু "Checkout Sessions: Write" দিন (`rk_test_…`)।
 3. OmniSuite → **Settings → Online payments** খুলুন। পাতায় একটা **Webhook address** দেখাবে (যেমন `https://app.omniscopedigital.com/api/stripe/webhook/<id>`)। এটা কপি করুন।
-4. Stripe Dashboard → **Developers → Webhooks → Add endpoint** → ওই address বসান → events বাছুন: `checkout.session.completed` আর `checkout.session.async_payment_succeeded` → Save → **Signing secret** (`whsec_…`) কপি করুন।
+4. Stripe Dashboard → **Developers → Webhooks → Add endpoint** → ওই address বসান → events বাছুন: `checkout.session.completed`, `checkout.session.async_payment_succeeded` আর `charge.refunded` (refund হলে ledger ঠিক রাখতে) → Save → **Signing secret** (`whsec_…`) কপি করুন।
 5. OmniSuite-এ secret key, signing secret, কোন bank account-এ টাকা জমা হবে বেছে **Save** চাপুন। OmniSuite key-টা Stripe-এ যাচাই করে নেয়।
 6. পরীক্ষা: একটা invoice "Sent" করুন → client হিসেবে portal-এ গিয়ে **Pay online** → Stripe-এর test কার্ড `4242 4242 4242 4242`, যেকোনো ভবিষ্যৎ তারিখ, যেকোনো CVC → কিছুক্ষণ পরে invoice "Paid" হবে।
 7. সব ঠিক থাকলে Stripe-এ **live** key আর live webhook বানিয়ে একইভাবে বসান।
@@ -728,4 +737,46 @@ XERO_CLIENT_SECRET=<client secret>
 5. যে business AI চায় না, সে **Settings → Modules**-এ "AI assistant" বন্ধ করতে পারে। ব্যবহারের অনুমতি (`ai.use`) owner, admin আর manager-এর আছে, Team → Roles-এ বদলানো যায়।
 6. গোপনীয়তা: insights-এ শুধু মোট সংখ্যা যায়, কোনো ক্লায়েন্টের নাম না। Proposal draft-এ আপনার লেখা brief আর ক্লায়েন্টের নাম Anthropic-এ যায়।
 
+**অন্য AI ব্যবহার করতে চাইলে:** ডিফল্ট হলো Claude। `src/config/ai.ts`-এ `defaultProvider` বদলালে সব feature, আর `features`-এ override দিলে শুধু একটা feature অন্য provider বা model ব্যবহার করবে (যেমন `insights: { model: "claude-haiku-5-5" }` সস্তা আর দ্রুত)। OpenAI, OpenRouter, Groq, DeepSeek, Ollama বা Gemini-র মতো OpenAI-style সার্ভিসের জন্য `providers["openai-compatible"]`-এ `baseUrl` আর `model` দিন, আর env-এ `OPENAI_COMPATIBLE_API_KEY` বসিয়ে restart করুন (লোকাল Ollama-তে যেকোনো মান দিলেই চলে)। যে provider-এর key নেই, সেটা যে feature ব্যবহার করে সেটা লুকানো থাকে। দৈনিক সীমা আর token হিসাব সব provider-এ একই। বিস্তারিত ও নতুন ধরনের provider যোগ করার ধাপ: `docs/configuration.md` → AI providers। মনে রাখবেন, অন্য provider বেছে নিলে proposal brief আর ক্লায়েন্টের নাম সেই কোম্পানিতে যাবে।
+
 অফিসিয়াল লিংক: [Stripe Checkout](https://docs.stripe.com/payments/checkout) · [Stripe webhooks](https://docs.stripe.com/webhooks) · [Stripe customer portal](https://docs.stripe.com/customer-management) · [Xero OAuth 2.0](https://developer.xero.com/documentation/guides/oauth2/overview) · [Xero scopes](https://developer.xero.com/documentation/guides/oauth2/scopes) · [Claude API](https://docs.claude.com/)
+
+---
+
+## 7. BDT, USD আর AUD-এ কেনাকাটা লেখা
+
+ব্যবসার মূল currency (base currency) AUD। সব রিপোর্ট, লাভ আর partner-এর ভাগ AUD-এ হিসাব হয়। অন্য currency-র account-এ লেনদেন লিখলে OmniSuite একটা exchange rate চায় আর AUD-এর অঙ্কটাও সেভ করে রাখে।
+
+মনে রাখার নিয়ম: **টাকা যে account থেকে আসলে বের হয়েছে, সেই account-এ, সেই currency-তে লিখুন।**
+
+### শুরুতে একবার
+
+1. **Finance → Setup → New account**-এ প্রতিটা আসল account আলাদা করে বানান, ঠিক currency বেছে: যেমন "bKash" (BDT), "City Bank" (BDT), "CommBank" (AUD), "AUD card" (AUD), "Wise USD" বা "Payoneer" (USD)। Currency বাক্সে লিখে খুঁজুন: `BDT`, `taka`, `USD`।
+2. **Settings → General**-এ business currency AUD রাখুন। টাকা লেখা শুরু হলে (লেনদেন, invoice, proposal বা capital) এটা আর বদলানো যায় না, কারণ আগের সব মোট অঙ্ক ভুল হয়ে যাবে। ভুল currency দিয়ে শুরু করলে টাকা লেখার আগেই ঠিক করুন।
+
+### (ক) BDT account থেকে খরচ (bKash, বাংলাদেশের ব্যাংক)
+
+1. **Finance → New transaction** → Kind: Expense → Account: "bKash (BDT)"।
+2. Amount: যত টাকা গেছে, BDT-তে (যেমন `12000`)।
+3. Exchange rate বাক্স আসবে: "1 BDT = ? AUD"। **Use today's rate** চাপলে আজকের বাজার রেট বসে যায় (যেমন `0.0127`)। ব্যাংক বা bKash অন্য রেট দিলে সেটাই লিখুন, বাক্সটা বদলানো যায়।
+4. নিচে AUD-এ কত হলো দেখাবে, যেমন "BDT 12,000.00 ≈ $152.40"। ঠিক থাকলে Save।
+
+### (খ) দাম USD-এ, কিন্তু AUD কার্ড দিয়ে পরিশোধ
+
+যেমন একটা টুলের দাম US$20, আপনার অস্ট্রেলিয়ান কার্ড কেটেছে A$31.45 (ব্যাংকের রেট আর ফি সহ)।
+
+1. Account: "AUD card" (AUD)। Amount: **কার্ড স্টেটমেন্টে যা কেটেছে**, অর্থাৎ `31.45`।
+2. Description-এ আসল দাম লিখুন, যেমন "Canva Pro, US$20"।
+3. এখানে কোনো exchange rate লাগবে না, কারণ account-টাই AUD। কার্ডের আসল খরচ (ফি সহ) ঠিকঠাক হিসাবে থাকে।
+
+### (গ) USD account বা wallet থেকে খরচ (Wise, Payoneer)
+
+1. Account: "Wise USD" (USD)। Amount: USD-এ যত গেছে, যেমন `20`।
+2. Exchange rate: "1 USD = ? AUD"। **Use today's rate** চাপুন, বা Wise যে রেট দেখায় সেটা লিখুন।
+3. AUD-এর অঙ্ক দেখে Save।
+
+### জেনে রাখুন
+
+- রেট আসে ExchangeRate-API (open.er-api.com) থেকে, দিনে একবার আপডেট হয়, সার্ভার ১২ ঘণ্টা মনে রাখে। শুধু currency code (যেমন `AUD`) পাঠানো হয়, ব্যবসার কোনো তথ্য না। রেট না এলে নিজে লিখে দিন।
+- রেট বন্ধ করতে চাইলে সার্ভারের env-এ `FX_PROVIDER=off`। অন্য উৎস যোগ করার জায়গা: `src/server/fx/` আর `src/config/regional.ts`।
+- Transfer এখন শুধু একই currency-র দুই account-এর মধ্যে করা যায়।

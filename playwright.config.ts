@@ -23,6 +23,13 @@ export default defineConfig({
     { name: "setup", testMatch: /auth\.setup\.ts/ },
     { name: "desktop", use: { ...devices["Desktop Chrome"] }, dependencies: ["setup"] },
     { name: "mobile", use: { ...devices["Pixel 7"] }, dependencies: ["setup"] },
+    // Dark mode: every page and open popup gets the same axe contrast checks.
+    {
+      name: "dark",
+      use: { ...devices["Desktop Chrome"], colorScheme: "dark" },
+      dependencies: ["setup"],
+      grep: /accessib|readable|detail pages/i,
+    },
   ],
   webServer: {
     command: "pnpm start",
