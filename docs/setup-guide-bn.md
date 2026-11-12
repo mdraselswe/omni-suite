@@ -670,7 +670,7 @@ docker compose -f docker-compose.prod.yml cp ./files/. app:/app/storage/
 | ৬.১ ক্লায়েন্টের অনলাইন পেমেন্ট | ক্লায়েন্ট → প্রতিটা business-এর Stripe | business নিজে Settings → Online payments-এ key বসায়          |
 | ৬.২ OmniSuite সাবস্ক্রিপশন      | business → আপনার (platform) Stripe      | `STRIPE_*` env (শুধু আপনি, platform owner)                    |
 | ৬.৩ Xero                        | —                                       | `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET` env + business connect |
-| ৬.৪ AI assistant                | আপনি Anthropic-কে                       | `ANTHROPIC_API_KEY` env                                       |
+| ৬.৪ AI assistant                | যে AI provider বাছবেন                   | `ANTHROPIC_API_KEY` বা অন্য provider-এর key (env)             |
 
 ### ৬.১ ক্লায়েন্টের অনলাইন কার্ড পেমেন্ট (প্রতিটা business-এর নিজের Stripe)
 
@@ -726,18 +726,37 @@ XERO_CLIENT_SECRET=<client secret>
 7. Xero-র Chart of accounts দেখে account code মিলিয়ে নিন: sales (সাধারণত `200`), payment-এর bank account (`090`, Xero-তে এই account-এ "Enable payments" চালু থাকতে হবে), GST tax type (`OUTPUT`)। তারপর **Sync now**।
 8. জেনে রাখুন: OmniSuite নতুন granular scope চায় (`accounting.contacts`, `accounting.invoices`, `accounting.payments`, `offline_access`)। Certify না করা app সর্বোচ্চ ২৫টা organisation connect করতে পারে, যা এখনকার জন্য যথেষ্ট। ৬০ দিন sync না হলে আবার Connect করতে হবে।
 
-### ৬.৪ AI assistant (Claude)
+### ৬.৪ AI assistant (Claude, ChatGPT, Gemini, DeepSeek ও অন্যরা)
 
 কেন: proposal লেখার সময় **Draft with AI** ছোট brief থেকে title, intro, terms আর line items-এর খসড়া বানায় (সেভ করার আগে আপনি দেখে বদলাবেন)। Dashboard-এ **AI insights** বোতাম ব্যবসার মোট সংখ্যা দেখে ৩–৫টা পরামর্শ দেয়। শুধু বোতাম চাপলেই চলে, নিজে থেকে না, তাই খরচ নিয়ন্ত্রণে থাকে।
 
-1. platform.claude.com-এ অ্যাকাউন্ট খুলুন → **API keys → Create key** → কপি করুন।
-2. Console-এ **Billing**-এ credit যোগ করুন বা কার্ড দিন। না দিলে প্রতিটা অনুরোধ ব্যর্থ হবে।
-3. env-এ বসান আর restart: `ANTHROPIC_API_KEY=<key>`।
-4. প্রতিটা business দিনে সর্বোচ্চ ৫০টা AI অনুরোধ করতে পারে। বদলাতে `src/config/ai.ts`-এ `dailyRequestsPerBusiness`।
-5. যে business AI চায় না, সে **Settings → Modules**-এ "AI assistant" বন্ধ করতে পারে। ব্যবহারের অনুমতি (`ai.use`) owner, admin আর manager-এর আছে, Team → Roles-এ বদলানো যায়।
-6. গোপনীয়তা: insights-এ শুধু মোট সংখ্যা যায়, কোনো ক্লায়েন্টের নাম না। Proposal draft-এ আপনার লেখা brief আর ক্লায়েন্টের নাম Anthropic-এ যায়।
+৯টা provider আগে থেকেই বসানো আছে। যার key env-এ দেবেন, শুধু সেটা চালু হবে:
 
-**অন্য AI ব্যবহার করতে চাইলে:** ডিফল্ট হলো Claude। `src/config/ai.ts`-এ `defaultProvider` বদলালে সব feature, আর `features`-এ override দিলে শুধু একটা feature অন্য provider বা model ব্যবহার করবে (যেমন `insights: { model: "claude-haiku-5-5" }` সস্তা আর দ্রুত)। OpenAI, OpenRouter, Groq, DeepSeek, Ollama বা Gemini-র মতো OpenAI-style সার্ভিসের জন্য `providers["openai-compatible"]`-এ `baseUrl` আর `model` দিন, আর env-এ `OPENAI_COMPATIBLE_API_KEY` বসিয়ে restart করুন (লোকাল Ollama-তে যেকোনো মান দিলেই চলে)। যে provider-এর key নেই, সেটা যে feature ব্যবহার করে সেটা লুকানো থাকে। দৈনিক সীমা আর token হিসাব সব provider-এ একই। বিস্তারিত ও নতুন ধরনের provider যোগ করার ধাপ: `docs/configuration.md` → AI providers। মনে রাখবেন, অন্য provider বেছে নিলে proposal brief আর ক্লায়েন্টের নাম সেই কোম্পানিতে যাবে।
+| Provider                                           | env-এ key                   | key কোথায় পাবেন                  | ফ্রি?                                                  |
+| -------------------------------------------------- | --------------------------- | --------------------------------- | ------------------------------------------------------ |
+| Claude (ডিফল্ট)                                    | `ANTHROPIC_API_KEY`         | platform.claude.com/settings/keys | না, যত ব্যবহার তত টাকা                                 |
+| OpenAI (ChatGPT)                                   | `OPENAI_API_KEY`            | platform.openai.com/api-keys      | না                                                     |
+| Google Gemini                                      | `GEMINI_API_KEY`            | aistudio.google.com/apikey        | হ্যাঁ, তবে ফ্রি প্ল্যানে prompt দিয়ে ট্রেনিং হতে পারে |
+| DeepSeek                                           | `DEEPSEEK_API_KEY`          | platform.deepseek.com/api_keys    | না, তবে খুব সস্তা                                      |
+| xAI (Grok)                                         | `XAI_API_KEY`               | console.x.ai                      | না                                                     |
+| Mistral                                            | `MISTRAL_API_KEY`           | console.mistral.ai/api-keys       | হ্যাঁ (Experiment প্ল্যান, ট্রেনিং হতে পারে)           |
+| Groq (ওপেন মডেল, খুব দ্রুত)                        | `GROQ_API_KEY`              | console.groq.com/keys             | হ্যাঁ, rate limit সহ                                   |
+| OpenRouter (এক key-তে অনেক মডেল)                   | `OPENROUTER_API_KEY`        | openrouter.ai/settings/keys       | হ্যাঁ, ফ্রি মডেলে ট্রেনিং হতে পারে                     |
+| অন্য যেকোনো OpenAI-style (যেমন নিজের পিসির Ollama) | `OPENAI_COMPATIBLE_API_KEY` | নিজের সার্ভার                     | হ্যাঁ                                                  |
+
+1. যে provider চান তার সাইটে অ্যাকাউন্ট খুলে **API key** বানান। Paid provider হলে Billing-এ credit বা কার্ড দিন, না দিলে অনুরোধ ব্যর্থ হবে।
+2. key বসান `.env.local`-এ (সার্ভারে env ফাইলে), যেমন `GEMINI_API_KEY=<key>`, তারপর restart। key কখনো chat, git বা অন্য কোথাও দেবেন না।
+3. পরীক্ষা: `pnpm ai:check`। প্রতিটা provider-এর key কাজ করছে কি না আর কোন কোন মডেল পাওয়া যায় দেখায় (কোনো token খরচ হয় না)। `pnpm ai:check --ping` প্রতিটাকে একটা ছোট অনুরোধ পাঠায় (কয়েকটা token)। Platform admin `/admin` পেজের নিচে একই অবস্থা দেখতে পাবেন।
+4. কোনটা ব্যবহার হবে সেটা `src/config/ai.ts`-এ:
+   - `defaultProvider: "gemini"` দিলে সব feature Gemini ব্যবহার করবে।
+   - `features: { insights: { provider: "groq" } }` দিলে শুধু ওই feature অন্যটা নেবে।
+   - `fallbackProviders: ["gemini", "groq"]` দিলে মূল provider-এর limit শেষ হলে, credit না থাকলে বা সার্ভিস বন্ধ থাকলে এগুলো ক্রমানুসারে চেষ্টা হবে (যাদের key আছে শুধু তারা)।
+5. মডেলের নাম প্রায়ই বদলায়। `ai:check` যদি বলে মডেল পাওয়া যায়নি, যে তালিকা দেখায় সেখান থেকে একটা নাম `src/config/ai.ts`-এ বসান।
+6. প্রতিটা business দিনে সর্বোচ্চ ৫০টা AI অনুরোধ করতে পারে। বদলাতে `src/config/ai.ts`-এ `dailyRequestsPerBusiness`।
+7. যে business AI চায় না, সে **Settings → Modules**-এ "AI assistant" বন্ধ করতে পারে। ব্যবহারের অনুমতি (`ai.use`) owner, admin আর manager-এর আছে, Team → Roles-এ বদলানো যায়।
+8. গোপনীয়তা: insights-এ শুধু মোট সংখ্যা যায়, কোনো ক্লায়েন্টের নাম না। Proposal draft-এ আপনার লেখা brief আর ক্লায়েন্টের নাম যে provider ব্যবহার হচ্ছে সেখানে যায়। যে ফ্রি প্ল্যানে ট্রেনিং হতে পারে (Gemini, Mistral, OpenRouter ফ্রি), সেটা শুধু demo ডেটা দিয়ে পরীক্ষার জন্য। আসল ক্লায়েন্টের কাজে paid প্ল্যান ব্যবহার করুন।
+
+জেনে রাখুন: Claude Max, ChatGPT Plus বা Gemini Advanced-এর মতো chat subscription দিয়ে API চলে না। অ্যাপের জন্য প্রতিটা provider-এর developer console থেকে আলাদা API key লাগে। বিস্তারিত: `docs/configuration.md` → AI providers।
 
 অফিসিয়াল লিংক: [Stripe Checkout](https://docs.stripe.com/payments/checkout) · [Stripe webhooks](https://docs.stripe.com/webhooks) · [Stripe customer portal](https://docs.stripe.com/customer-management) · [Xero OAuth 2.0](https://developer.xero.com/documentation/guides/oauth2/overview) · [Xero scopes](https://developer.xero.com/documentation/guides/oauth2/scopes) · [Claude API](https://docs.claude.com/)
 

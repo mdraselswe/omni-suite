@@ -2,6 +2,7 @@ import Link from "next/link";
 import { StatusBadge } from "@/components/data/status-badge";
 import { ActionForm, SubmitButton } from "@/components/form/action-form";
 import { EmptyState, PageHeader } from "@/components/layout/page";
+import { AiProvidersPanel } from "@/features/ai";
 import { billingStatuses } from "@/features/billing";
 import { platformTenants, setTenantStatusAction } from "@/features/settings";
 import { t } from "@/i18n";
@@ -67,6 +68,7 @@ export default async function AdminPage() {
           ))}
         </ul>
       )}
+      <AiProvidersPanel />
     </div>
   );
 }

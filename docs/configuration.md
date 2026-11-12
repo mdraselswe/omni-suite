@@ -57,12 +57,33 @@ Switch with `pnpm mode static` or `pnpm mode server`. CI builds both modes, so c
 
 ## AI providers
 
-Claude (`anthropic`) is the default and the only provider with a key today. Every AI call goes through `src/server/ai/`: a feature (`proposalDraft`, `insights`) asks the registry, which picks the provider and model from `src/config/ai.ts` and returns text plus token counts. The daily allowance, token recording and error messages in `src/features/ai/run.ts` are the same for every provider.
+Every AI call goes through `src/server/ai/`: a feature (`proposalDraft`, `insights`) asks the registry, which picks the provider and model from `src/config/ai.ts` and returns text plus token counts. The daily allowance, token recording and error messages in `src/features/ai/run.ts` are the same for every provider.
 
-- **Switch everything:** set `defaultProvider` in `src/config/ai.ts` and that provider's key in env.
-- **Switch one feature:** add an override, e.g. `features: { insights: { model: "claude-haiku-5-5" } }` (cheaper Claude model) or `features: { proposalDraft: { provider: "openai-compatible", model: "gpt-5-mini" } }`. Leave out `provider` to keep the default one; leave out `model` to use the provider's own.
-- **OpenAI-style services** (OpenAI, OpenRouter, Groq, DeepSeek, Ollama, Gemini's OpenAI endpoint): set `providers["openai-compatible"].baseUrl` and `model`, put the key in `OPENAI_COMPATIBLE_API_KEY` (any value for a local Ollama). If the service doesn't support strict JSON schemas, set `jsonMode` to `"json_object"` or `"none"`; if it rejects `max_completion_tokens`, set `tokenLimitParam` to `"max_tokens"`.
-- A feature is hidden (and its action refuses) until the provider it uses has a key.
+| Id                  | Provider                                          | Key (env)                   | Default model          | Free tier                  |
+| ------------------- | ------------------------------------------------- | --------------------------- | ---------------------- | -------------------------- |
+| `anthropic`         | Claude (official SDK)                             | `ANTHROPIC_API_KEY`         | `claude-opus-5-5`      | no                         |
+| `openai`            | OpenAI                                            | `OPENAI_API_KEY`            | `gpt-6.1-terra`        | no                         |
+| `gemini`            | Google Gemini (OpenAI endpoint)                   | `GEMINI_API_KEY`            | `gemini-3.8-flash`     | yes, may train on prompts  |
+| `deepseek`          | DeepSeek                                          | `DEEPSEEK_API_KEY`          | `deepseek-flash`       | no (very cheap)            |
+| `xai`               | xAI Grok                                          | `XAI_API_KEY`               | `grok-4.3`             | no                         |
+| `mistral`           | Mistral                                           | `MISTRAL_API_KEY`           | `mistral-small-latest` | yes, may train on prompts  |
+| `groq`              | Groq (open models)                                | `GROQ_API_KEY`              | `openai/gpt-oss-120b`  | yes                        |
+| `openrouter`        | OpenRouter (many models)                          | `OPENROUTER_API_KEY`        | `openrouter/free`      | yes, free models may train |
+| `openai-compatible` | Any OpenAI-style server (local Ollama by default) | `OPENAI_COMPATIBLE_API_KEY` | `llama3.2`             | yes (your own machine)     |
+
+Everything except Claude uses one Chat Completions adapter (`src/server/ai/openai-compatible.ts`); each provider's `baseUrl`, `jsonMode` and `tokenLimitParam` are in `src/config/ai.ts`. Chat subscriptions (Claude Max, ChatGPT Plus, Gemini Advanced) don't include API access: each provider needs an API key from its developer console.
+
+- **Turn one on:** put its key in `.env.local` (production: the server's env file) and restart. A provider without a key is off.
+- **Check keys and models:** `pnpm ai:check` lists every provider, tests each key by listing its models (no tokens spent) and warns when the configured model id isn't available. `pnpm ai:check --ping` also sends one tiny request to each (a few tokens). Platform admins see the same key state, read-only, on `/admin`.
+- **Switch everything:** set `defaultProvider` in `src/config/ai.ts`.
+- **Switch one feature:** add an override, e.g. `features: { insights: { model: "claude-haiku-5-5" } }` (cheaper Claude model) or `features: { proposalDraft: { provider: "gemini" } }`. Leave out `provider` to keep the default one; leave out `model` to use the provider's own.
+- **Fallback:** `fallbackProviders: ["gemini", "groq"]` tries those in order (each with its own model, only if it has a key) when the chosen one fails with a rate limit, no credit, a bad key, a timeout or a server error. A refusal or a cut-off answer is not retried elsewhere. Only the provider name and HTTP status are logged, never the prompt.
+- **Model ids change.** When a provider renames a model, `pnpm ai:check` shows what the key can use; put the new id in `src/config/ai.ts`.
+- **JSON answers:** if a service rejects strict JSON schemas, set its `jsonMode` to `"json_object"` (DeepSeek needs this) or `"none"`; if it rejects `max_completion_tokens`, set `tokenLimitParam` to `"max_tokens"`.
+- **Privacy:** proposal drafts send the brief and the client's name to the provider. Free tiers that may train on prompts (Gemini free, Mistral Experiment, OpenRouter free models) are for testing with demo data only; use a paid tier for real clients.
+- A feature is hidden (and its action refuses) until it has a provider with a key (its own or a fallback).
+
+**Adding another OpenAI-style provider:** add its id to `AI_PROVIDERS` (`src/config/schema.ts`), its settings in `src/config/ai.ts`, its key in `src/config/env.ts`, `.env.example` and `API_KEYS` (`src/server/ai/registry.ts`). No new code is needed.
 
 **Adding a new kind of provider** (one that isn't OpenAI-compatible):
 
